@@ -3,7 +3,6 @@
   lib,
   nixosTests,
   fetchFromGitHub,
-  fetchpatch,
   nodejs,
   pnpm,
   makeWrapper,
@@ -19,24 +18,15 @@
 stdenv.mkDerivation (finalAttrs: {
   pname = "misskey";
 
-  version = "2024.11.0";
+  version = "2025.3.1";
 
   src = fetchFromGitHub {
     owner = "misskey-dev";
     repo = "misskey";
     rev = finalAttrs.version;
-    hash = "sha256-uei5Ojx39kCbS8DCjHZ5PoEAsqJ5vC6SsFqIEIJ16n8=";
+    hash = "sha256-i6jAKPfhA/roGs4eNugoU1CwyNO06jagxW9uACJRPoE=";
     fetchSubmodules = true;
   };
-
-  patches = [
-    (fetchpatch {
-      # https://github.com/misskey-dev/misskey/security/advisories/GHSA-w98m-j6hq-cwjm
-      name = "CVE-2025-24896.patch";
-      url = "https://github.com/misskey-dev/misskey/commit/ba9f295ef2bf31cc90fa587e20b9a7655b7a1824.patch";
-      hash = "sha256-jNl2AdLaG3v8QB5g/UPTupdyP1yGR0WcWull7EA7ogs=";
-    })
-  ];
 
   nativeBuildInputs = [
     nodejs
@@ -48,7 +38,7 @@ stdenv.mkDerivation (finalAttrs: {
   # https://nixos.org/manual/nixpkgs/unstable/#javascript-pnpm
   pnpmDeps = pnpm.fetchDeps {
     inherit (finalAttrs) pname version src;
-    hash = "sha256-luAgKK+gJmNrDdER7ARD3KbzoOrCR8cRD78Mx5KNLJg=";
+    hash = "sha256-wD7o1kLicYN1x3T5L9bSpT9d6H4EEvgVszC+sbBMrNA=";
   };
 
   buildPhase = ''
