@@ -5,7 +5,7 @@
   fetchFromGitHub,
   fetchpatch,
   nodejs,
-  pnpm_9,
+  pnpm,
   makeWrapper,
   python3,
   bash,
@@ -40,15 +40,15 @@ stdenv.mkDerivation (finalAttrs: {
 
   nativeBuildInputs = [
     nodejs
-    pnpm_9.configHook
+    pnpm.configHook
     makeWrapper
     python3
   ] ++ lib.optionals stdenv.hostPlatform.isDarwin [ xcbuild.xcrun ];
 
   # https://nixos.org/manual/nixpkgs/unstable/#javascript-pnpm
-  pnpmDeps = pnpm_9.fetchDeps {
+  pnpmDeps = pnpm.fetchDeps {
     inherit (finalAttrs) pname version src;
-    hash = "sha256-YWZhm5eKjB6JGP45WC3UrIkr7vuBUI4Q3oiK8Lst3dI=";
+    hash = "sha256-luAgKK+gJmNrDdER7ARD3KbzoOrCR8cRD78Mx5KNLJg=";
   };
 
   buildPhase = ''
@@ -97,7 +97,7 @@ stdenv.mkDerivation (finalAttrs: {
       # Otherwise, maybe somehow bindmount a writable directory into <package>/data/files.
       ln -s /var/lib/misskey $out/data/files
 
-      makeWrapper ${pnpm_9}/bin/pnpm $out/bin/misskey \
+      makeWrapper ${pnpm}/bin/pnpm $out/bin/misskey \
         --run "${checkEnvVarScript} || exit" \
         --chdir $out/data \
         --add-flags run \
@@ -105,7 +105,7 @@ stdenv.mkDerivation (finalAttrs: {
         --prefix PATH : ${
           lib.makeBinPath [
             nodejs
-            pnpm_9
+            pnpm
             bash
           ]
         } \
