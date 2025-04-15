@@ -1112,6 +1112,7 @@
   ./services/networking/fireqos.nix
   ./services/networking/firewall.nix
   ./services/networking/firewalld
+  ./services/networking/firewall-firewalld.nix
   ./services/networking/firewall-iptables.nix
   ./services/networking/firewall-nftables.nix
   ./services/networking/firezone/gateway.nix
