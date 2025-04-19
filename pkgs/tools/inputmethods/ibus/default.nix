@@ -61,13 +61,13 @@ in
 
 stdenv.mkDerivation rec {
   pname = "ibus";
-  version = "1.5.31";
+  version = "1.5.32";
 
   src = fetchFromGitHub {
     owner = "ibus";
     repo = "ibus";
     rev = version;
-    sha256 = "sha256-YMCtLIK/9iUdS37Oiow7WMhFFPKhomNXvzWbLzlUkdQ=";
+    hash = "sha256-Rp2Aw2C2LXMBp8++pnZtPHiPoFDERpkDsKd0E//twuY=";
   };
 
   patches = [
@@ -82,6 +82,7 @@ stdenv.mkDerivation rec {
       PYTHON = null;
     })
     ./build-without-dbus-launch.patch
+    ./dont-build-input-method-unstable-v1.patch
   ];
 
   outputs = [

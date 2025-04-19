@@ -1,0 +1,19 @@
+diff -ur a/client/wayland/Makefile.am b/client/wayland/Makefile.am
+--- a/client/wayland/Makefile.am
++++ b/client/wayland/Makefile.am
+@@ -80,11 +80,11 @@
+ # for multiple protocols.
+ wayland_text_protocoldir = $(WAYLAND_PRTCLS_DIR)/$(WAYLAND_TEXT_PRTCL_SUBDIR)
+ 
+-input-method-unstable-v1-client-protocol.h: $(wayland_protocoldir)/input-method-unstable-v1.xml
+-	$(AM_V_GEN)$(wayland_scanner) client-header $< $@
++input-method-unstable-v1-client-protocol.h:
++	touch $@
+ 
+-input-method-unstable-v1-protocol.c: $(wayland_protocoldir)/input-method-unstable-v1.xml
+-	$(AM_V_GEN)$(wayland_scanner) code $< $@
++input-method-unstable-v1-protocol.c:
++	touch $@
+ 
+ input-method-unstable-v2-client-protocol.h: $(srcdir)/input-method-unstable-v2.xml
+ 	$(AM_V_GEN)$(wayland_scanner) client-header $< $@
