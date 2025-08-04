@@ -62,11 +62,16 @@ in
         }
       ];
 
+    # for polkit rules
+    environment.systemPackages = [ cfg.package ];
+    services.dbus.packages = [ cfg.package ];
     systemd.packages = [ cfg.package ];
 
     systemd.services.sing-box = {
       preStart = utils.genJqSecretsReplacementSnippet cfg.settings "/run/sing-box/config.json";
       serviceConfig = {
+        User = "sing-box";
+        Group = "sing-box";
         StateDirectory = "sing-box";
         StateDirectoryMode = "0700";
         RuntimeDirectory = "sing-box";
@@ -78,6 +83,13 @@ in
       };
       wantedBy = [ "multi-user.target" ];
     };
-  };
 
+    users = {
+      users.sing-box = {
+        isSystemUser = true;
+        group = "sing-box";
+      };
+      groups.sing-box = { };
+    };
+  };
 }
