@@ -95,6 +95,7 @@ in
       users.sing-box = {
         isSystemUser = true;
         group = "sing-box";
+        home = "/var/lib/sing-box";
       };
       groups.sing-box = { };
     };
