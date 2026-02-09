@@ -984,5 +984,9 @@ in
 
   };
 
-  meta.maintainers = [ lib.maintainers.dblsaiko ];
+  meta.maintainers = with lib.maintainers; [
+    dblsaiko
+    jappie3
+    prince213
+  ];
 }
