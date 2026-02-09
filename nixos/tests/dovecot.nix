@@ -8,6 +8,7 @@
       services.postfix.enable = true;
       services.dovecot2 = {
         enable = true;
+        package = pkgs.dovecot_2_3;
         protocols = [
           "imap"
           "pop3"
@@ -31,7 +32,7 @@
           sendTestMailViaDeliveryAgent = pkgs.writeScriptBin "send-lda" ''
             #!${pkgs.runtimeShell}
 
-            exec ${pkgs.dovecot}/libexec/dovecot/deliver -d bob <<MAIL
+            exec ${pkgs.dovecot_2_3}/libexec/dovecot/deliver -d bob <<MAIL
             From: root@localhost
             To: bob@localhost
             Subject: Something else...
@@ -74,7 +75,6 @@
 
         in
         [
-          pkgs.dovecot_pigeonhole
           sendTestMail
           sendTestMailViaDeliveryAgent
           testImap
