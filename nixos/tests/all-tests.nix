@@ -1006,6 +1006,8 @@ in
     inherit runTest;
     inherit (pkgs) lib;
   };
+  mox = runTest ./mox.nix;
+  mox-modular = runTest ./mox-modular.nix;
   mpd = runTest ./mpd.nix;
   mpv = runTest ./mpv.nix;
   mtp = runTest ./mtp.nix;

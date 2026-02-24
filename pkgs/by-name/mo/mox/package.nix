@@ -2,6 +2,7 @@
   lib,
   buildGoModule,
   fetchFromGitHub,
+  nixosTests,
   nix-update-script,
 }:
 
@@ -28,7 +29,16 @@ buildGoModule (finalAttrs: {
     "-X github.com/mjl-/mox/moxvar.VersionBare=${finalAttrs.version}"
   ];
 
-  passthru.updateScript = nix-update-script { };
+  passthru = {
+    services.default = {
+      imports = [ ./service.nix ];
+      mox.package = finalAttrs.finalPackage;
+    };
+    tests = {
+      inherit (nixosTests) mox mox-modular;
+    };
+    updateScript = nix-update-script { };
+  };
 
   meta = {
     description = "Modern full-featured open source secure mail server for low-maintenance self-hosted email";
