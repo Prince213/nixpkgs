@@ -538,6 +538,8 @@ self: super: with self; {
 
   aiotedee = callPackage ../development/python-modules/aiotedee { };
 
+  aiotools = callPackage ../development/python-modules/aiotools { };
+
   aiotractive = callPackage ../development/python-modules/aiotractive { };
 
   aiounifi = callPackage ../development/python-modules/aiounifi { };
@@ -16555,6 +16557,8 @@ self: super: with self; {
   requests-futures = callPackage ../development/python-modules/requests-futures { };
 
   requests-gssapi = callPackage ../development/python-modules/requests-gssapi { };
+
+  requests-hardened = callPackage ../development/python-modules/requests-hardened { };
 
   requests-hawk = callPackage ../development/python-modules/requests-hawk { };
 
