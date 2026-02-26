@@ -507,7 +507,7 @@ in
               nginxAuthRequest
               + nginxProxySettings
               + ''
-                limit_except GET {
+                limit_except POST {
                     deny  all;
                 }
               '';
