@@ -61,6 +61,15 @@ stdenv.mkDerivation (finalAttrs: {
     "CFLAGS+=-DHAVE_STRUCT_STAT_ST_CTIM=0"
     "CFLAGS+=-DHAVE_SYMLINK=0"
     "CFLAGS+=-DRESERVE_STD_EXT_IDS"
+    # sys/stat.h does exist on Windows for us
+    "CFLAGS+=-DHAVE_SYS_STAT_H=1"
+    # It is called st_ctime on windows, this forces that
+    # choice
+    "CFLAGS+=-DHAVE_STRUCT_STAT_ST_CTIM=0"
+    "CFLAGS+=-DHAVE_MEMPCPY=1"
+    "CFLAGS+=-DHAVE_GETRESUID=0"
+    "CFLAGS+=-DHAVE_GETEUID=0"
+    "CFLAGS+=-DHAVE_FCHMOD=0"
   ]
   ++ lib.optionals stdenv.hostPlatform.isFreeBSD [
     "CFLAGS+=-DNETBSD_INSPIRED=0"

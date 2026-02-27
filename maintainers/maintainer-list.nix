@@ -6053,13 +6053,6 @@
     github = "David-Kopczynski";
     githubId = 53194670;
   };
-  david-r-cox = {
-    email = "david@integrated-reasoning.com";
-    github = "david-r-cox";
-    githubId = 4259949;
-    name = "David Cox";
-    keys = [ { fingerprint = "0056 A3F6 9918 1E0D 8FF0  BCDE 65BB 07FA A4D9 4634"; } ];
-  };
   david-sawatzke = {
     email = "d-nix@sawatzke.dev";
     github = "david-sawatzke";
@@ -27258,6 +27251,12 @@
     github = "tonybutt";
     githubId = 38566841;
     name = "Anthony Butt";
+  };
+  toodeluna = {
+    email = "luna@toodeluna.net";
+    github = "toodeluna";
+    githubId = 112084382;
+    name = "Luna Heyman";
   };
   toonn = {
     email = "nixpkgs@toonn.io";
