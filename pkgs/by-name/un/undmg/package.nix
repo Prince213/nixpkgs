@@ -10,7 +10,7 @@
 }:
 
 let
-  zlib' = zlib.override { static = false; };
+  zlib' = zlib.override { shared = true; };
 in
 stdenv.mkDerivation {
   pname = "undmg";
