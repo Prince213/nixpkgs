@@ -7,14 +7,14 @@
 
 buildPythonPackage rec {
   pname = "stdlibs";
-  version = "2026.2.26";
+  version = "2025.10.28";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "omnilib";
     repo = "stdlibs";
     tag = "v${version}";
-    hash = "sha256-5Brb214tglEEjsJXOvEhlaJgSYCUpOGPbHkmI9AWPoM=";
+    hash = "sha256-1xdwYwkQqkPsa5yjrTUM0HxRVLJ+ZQvYwFpjIlW7jaY=";
   };
 
   build-system = [ flit-core ];

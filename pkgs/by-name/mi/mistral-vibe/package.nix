@@ -12,14 +12,14 @@
 
 python3Packages.buildPythonApplication (finalAttrs: {
   pname = "mistral-vibe";
-  version = "2.3.0";
+  version = "2.2.1";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "mistralai";
     repo = "mistral-vibe";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-aXRceZAW4XUAXfD8HzGnS6qkFAj6VoTwVepZJmvf48Q=";
+    hash = "sha256-vJnykMcnwQDmzq0L4OhPzortliggtK8Hz+iG2cGu8BM=";
   };
 
   build-system = with python3Packages; [
@@ -39,7 +39,6 @@ python3Packages.buildPythonApplication (finalAttrs: {
   dependencies = with python3Packages; [
     agent-client-protocol
     anyio
-    cachetools
     cryptography
     gitpython
     giturlparse
@@ -47,7 +46,6 @@ python3Packages.buildPythonApplication (finalAttrs: {
     httpx
     keyring
     mcp
-    markdownify
     mistralai
     packaging
     pexpect
@@ -95,9 +93,6 @@ python3Packages.buildPythonApplication (finalAttrs: {
   disabledTestPaths = [
     # All snapshot tests fail with AssertionError
     "tests/snapshots/"
-
-    # Try to invoke `uv run vibe`
-    "tests/e2e/"
 
     # ACP tests require network access
     "tests/acp/test_acp.py"

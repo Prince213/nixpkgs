@@ -14,14 +14,14 @@
 
 buildPythonPackage rec {
   pname = "dissect-fve";
-  version = "4.6";
+  version = "4.5";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "fox-it";
     repo = "dissect.fve";
     tag = version;
-    hash = "sha256-VNkMqnv0LFvqVIQzk086o4UDH3bcK3HgF0HdYmhpNgY=";
+    hash = "sha256-Lg29WJfXvjdhGtkZowzXgH9zzockoGkei1s9hgLr/gg=";
   };
 
   build-system = [

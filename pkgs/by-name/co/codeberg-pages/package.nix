@@ -41,6 +41,7 @@ buildGoModule (finalAttrs: {
   meta = {
     mainProgram = "pages";
     maintainers = with lib.maintainers; [
+      laurent-f1z1
       christoph-heiss
     ];
     license = lib.licenses.eupl12;

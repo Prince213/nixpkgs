@@ -6,16 +6,16 @@
 
 buildGoModule (finalAttrs: {
   pname = "reflex";
-  version = "0.3.2";
+  version = "0.3.1";
 
   src = fetchFromGitHub {
     owner = "cespare";
     repo = "reflex";
     rev = "v${finalAttrs.version}";
-    sha256 = "sha256-qc33ppo+RdhztgCUKPSbVFWlz5FTCEExVHkUre+MR+o=";
+    sha256 = "sha256-/2qVm2xpSFVspA16rkiIw/qckxzXQp/1EGOl0f9KljY=";
   };
 
-  vendorHash = "sha256-QCdhZmuxWUAwCwoLLWqEP6zoBBGh5OpDTz4uLIY0xAg=";
+  vendorHash = "sha256-JCtVYDHbhH2i7tGNK1jvgHCjU6gMMkNhQ2ZnlTeqtmA=";
 
   ldflags = [
     "-s"

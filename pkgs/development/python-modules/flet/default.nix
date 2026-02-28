@@ -86,7 +86,6 @@ buildPythonPackage rec {
   pythonImportsCheck = [ "flet" ];
 
   meta = {
-    broken = true;
     description = "Framework that enables you to easily build realtime web, mobile, and desktop apps in Python";
     homepage = "https://flet.dev/";
     changelog = "https://github.com/flet-dev/flet/releases/tag/v${version}";

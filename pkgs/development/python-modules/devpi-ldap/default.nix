@@ -6,6 +6,7 @@
   ldap3,
   mock,
   pytest-cov-stub,
+  pytest-flake8,
   pytestCheckHook,
   pythonOlder,
   pythonAtLeast,
@@ -45,6 +46,7 @@ buildPythonPackage (finalAttrs: {
     devpi-server
     mock
     pytest-cov-stub
+    pytest-flake8
     pytestCheckHook
     webtest
   ];

@@ -164,11 +164,6 @@ stdenv.mkDerivation (finalAttrs: {
       substituteInPlace "$x" \
         --subst-var-by ssh "${openssh}/bin/ssh"
     done
-  ''
-  + lib.optionalString (rustSupport && (stdenv.buildPlatform != stdenv.hostPlatform)) ''
-    substituteInPlace Makefile \
-      --replace-fail "RUST_TARGET_DIR = target/" \
-                     "RUST_TARGET_DIR = target/${stdenv.hostPlatform.rust.rustcTargetSpec}/"
   '';
 
   nativeBuildInputs = [
@@ -210,16 +205,10 @@ stdenv.mkDerivation (finalAttrs: {
     libsecret
   ];
 
-  env = {
-    # required to support pthread_cancel()
-    NIX_LDFLAGS =
-      lib.optionalString (stdenv.cc.isGNU && stdenv.hostPlatform.libc == "glibc") "-lgcc_s"
-      + lib.optionalString (stdenv.hostPlatform.isFreeBSD) "-lthr";
-  }
-  // lib.attrsets.optionalAttrs (rustSupport && (stdenv.buildPlatform != stdenv.hostPlatform)) {
-    # Rust cross-compilation
-    CARGO_BUILD_TARGET = stdenv.hostPlatform.rust.rustcTargetSpec;
-  };
+  # required to support pthread_cancel()
+  env.NIX_LDFLAGS =
+    lib.optionalString (stdenv.cc.isGNU && stdenv.hostPlatform.libc == "glibc") "-lgcc_s"
+    + lib.optionalString (stdenv.hostPlatform.isFreeBSD) "-lthr";
 
   configureFlags = [
     "ac_cv_prog_CURL_CONFIG=${lib.getDev curl}/bin/curl-config"

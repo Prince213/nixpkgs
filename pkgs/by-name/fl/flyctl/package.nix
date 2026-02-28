@@ -7,26 +7,22 @@
   flyctl,
   installShellFiles,
   git,
-  rake,
 }:
 
 buildGoModule rec {
   pname = "flyctl";
-  version = "0.4.15";
+  version = "0.3.209";
 
   src = fetchFromGitHub {
     owner = "superfly";
     repo = "flyctl";
     rev = "v${version}";
-    postCheckout = ''
-      cd "$out"
-      git rev-parse HEAD > COMMIT
-    '';
-    hash = "sha256-2xl4dAP+9kTPkhFfXLNw00krB7zC10em1vAULTBKqvQ=";
+    leaveDotGit = true;
+    hash = "sha256-hzKKCwGTaz1MFQ1+F9piNBnaEDZJwJqoerR1c/uzSsQ=";
   };
 
   proxyVendor = true;
-  vendorHash = "sha256-xVRLH1H7HhxaR9L+N+qE4kwqjMyie+JjeXpXvwRKa5A=";
+  vendorHash = "sha256-ezGA1LGwQVFMzV/Ogj26pooD06O7FNTXMrYWkv6AwWM=";
 
   subPackages = [ "." ];
 
@@ -43,19 +39,14 @@ buildGoModule rec {
     git
   ];
 
-  patches = [
-    ./disable-auto-update.patch
-    ./set-commit.patch
-  ];
+  patches = [ ./disable-auto-update.patch ];
 
   preBuild = ''
-    export GOFLAGS="$GOFLAGS -buildvcs=false"
-    substituteInPlace internal/buildinfo/buildinfo.go \
-      --replace '@commit@' "$(cat COMMIT)"
+    # Embed VCS Infos
+    export GOFLAGS="$GOFLAGS -buildvcs=true"
+
     GOOS= GOARCH= CGO_ENABLED=0 go generate ./...
   '';
-
-  nativeCheckInputs = [ rake ];
 
   preCheck = ''
     HOME=$(mktemp -d)

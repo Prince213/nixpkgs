@@ -4,39 +4,27 @@
   fetchFromGitea,
   installShellFiles,
   stdenv,
-  writableTmpDirAsHomeHook,
 }:
 
 buildGoModule (finalAttrs: {
   pname = "tea";
-  version = "0.12.0";
+  version = "0.11.1";
 
   src = fetchFromGitea {
     domain = "gitea.com";
     owner = "gitea";
     repo = "tea";
     rev = "v${finalAttrs.version}";
-    sha256 = "sha256-yaktVULY9eGRyWVqbwjZSo5d9DhHJMycfdEwZgxaLnw=";
+    sha256 = "sha256-bphXaE5qPNzqn+PlzESZadpwbS6KryJEnL7hH/CBoTI=";
   };
 
-  vendorHash = "sha256-u4GTrdxmsfxC8s0LwQbsbky/zk1pW5VNSp4+7ZCIxzY=";
+  vendorHash = "sha256-Y9YDwfubT+RR1v6BTFD+A8GP2ArQaIIoMJmak+Vcx88=";
 
   ldflags = [
-    "-s"
-    "-w"
-    "-X code.gitea.io/tea/modules/version.Version=${finalAttrs.version}"
-    "-X code.gitea.io/tea/modules/version.Tags=nixpkgs"
-    "-X code.gitea.io/tea/modules/version.SDK=0.23.2"
-  ];
-
-  checkFlags = [
-    # requires a git repository
-    "-skip=TestRepoFromPath_Worktree"
+    "-X code.gitea.io/tea/cmd.Version=${finalAttrs.version}"
   ];
 
   nativeBuildInputs = [ installShellFiles ];
-
-  nativeCheckInputs = [ writableTmpDirAsHomeHook ];
 
   postInstall = lib.optionalString (stdenv.buildPlatform.canExecute stdenv.hostPlatform) ''
     installShellCompletion --cmd tea \

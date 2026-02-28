@@ -28,14 +28,14 @@ let
 in
 python.pkgs.buildPythonApplication (finalAttrs: {
   pname = "netexec";
-  version = "1.5.1";
+  version = "1.5.0";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "Pennyw0rth";
     repo = "NetExec";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-BKqBmpA2cSKwC9zX++Z6yTSDIyr4iZVGC/Eea6zoMLQ=";
+    hash = "sha256-gGyaEifIveoeVdeviLiQ6ZIHku//h9Hp84ffktAgxDY=";
   };
 
   pythonRelaxDeps = true;
@@ -102,6 +102,9 @@ python.pkgs.buildPythonApplication (finalAttrs: {
   ];
 
   nativeCheckInputs = with python.pkgs; [ pytestCheckHook ] ++ [ writableTmpDirAsHomeHook ];
+
+  # Tests no longer works out-of-box with 1.3.0
+  doCheck = false;
 
   meta = {
     description = "Network service exploitation tool (maintained fork of CrackMapExec)";

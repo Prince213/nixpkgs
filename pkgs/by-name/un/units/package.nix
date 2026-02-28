@@ -14,11 +14,11 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "units";
-  version = "2.26";
+  version = "2.25";
 
   src = fetchurl {
     url = "mirror://gnu/units/units-${finalAttrs.version}.tar.gz";
-    hash = "sha256-TEP3pJ/iIS7kM9PAdVoKGTXbNUl8Sla/n2jF9xiHPFQ=";
+    hash = "sha256-Nu30OsALTWMEuuqROH5lqwURi/Zckh9z07CIKOWm7As=";
   };
 
   # Until upstream updates their code to work with GCC 15.

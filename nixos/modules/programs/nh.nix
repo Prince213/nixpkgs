@@ -12,7 +12,6 @@ in
     NotAShelf
     mdaniels5757
     viperML
-    faukah
   ];
 
   options.programs.nh = {

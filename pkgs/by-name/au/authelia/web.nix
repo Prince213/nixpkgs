@@ -35,7 +35,7 @@ stdenv.mkDerivation (finalAttrs: {
       sourceRoot
       ;
     inherit pnpm; # This may be different than pkgs.pnpm
-    fetcherVersion = 3;
+    fetcherVersion = 1;
     hash = pnpmDepsHash;
   };
 
