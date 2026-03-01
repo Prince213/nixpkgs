@@ -39,6 +39,43 @@ let
     alter_id = 0;
   };
 
+  naivePort = 1081;
+  naivePassword = "password";
+  naiveInbound = {
+    type = "naive";
+    tag = "inbound:naive";
+    listen = "0.0.0.0";
+    listen_port = naivePort;
+    users = [
+      {
+        username = "sekai";
+        password = naivePassword;
+      }
+    ];
+    tls = {
+      enabled = true;
+      server_name = target_host;
+      certificate_path = ./common/acme/server/acme.test.cert.pem;
+      key_path = ./common/acme/server/acme.test.key.pem;
+    };
+  };
+  naiveOutbound = {
+    type = "naive";
+    tag = "outbound:naive";
+    server = server_host;
+    server_port = naivePort;
+    username = "sekai";
+    password = naivePassword;
+    udp_over_tcp = {
+      enabled = true;
+      version = 2;
+    };
+    tls = {
+      enabled = true;
+      server_name = target_host;
+    };
+  };
+
   tunInbound = {
     type = "tun";
     tag = "inbound:tun";
@@ -211,6 +248,7 @@ in
           enable = true;
           settings = {
             inbounds = [
+              naiveInbound
               vmessInbound
             ];
             outbounds = [
@@ -511,6 +549,63 @@ in
           };
         };
       };
+
+    naive =
+      { pkgs, ... }:
+      {
+        networking = {
+          firewall.enable = false;
+          hosts = hostsEntries;
+          useDHCP = false;
+          interfaces.eth1 = {
+            ipv4.addresses = [
+              {
+                address = "1.1.1.7";
+                prefixLength = 24;
+              }
+            ];
+          };
+        };
+
+        security.pki.certificates = [
+          (builtins.readFile ./common/acme/server/ca.cert.pem)
+        ];
+
+        environment.systemPackages = [
+          pkgs.curl
+        ];
+
+        services.sing-box = {
+          enable = true;
+          package = pkgs.sing-box.override {
+            withNaiveOutbound = true;
+          };
+          settings = {
+            inbounds = [
+              tunInbound
+            ];
+            outbounds = [
+              {
+                type = "block";
+                tag = "outbound:block";
+              }
+              naiveOutbound
+            ];
+            route = {
+              default_interface = "eth1";
+              final = "outbound:block";
+              rules = [
+                {
+                  inbound = [
+                    "inbound:tun"
+                  ];
+                  outbound = "outbound:naive";
+                }
+              ];
+            };
+          };
+        };
+      };
   };
 
   testScript = ''
@@ -558,6 +653,11 @@ in
       fakeip.wait_for_unit("sing-box.service")
       fakeip.wait_until_succeeds("ip route get ${hosts."${target_host}"} | grep 'dev ${tunInbound.interface_name}'")
       fakeip.succeed("dig +short A ${target_host} @${target_host} | grep '^198.18.'")
+
+    with subtest("naive"):
+      naive.wait_for_unit("sing-box.service")
+      fakeip.wait_until_succeeds("ip route get ${hosts."${target_host}"} | grep 'dev ${tunInbound.interface_name}'")
+      test_curl(naive)
   '';
 
 }
