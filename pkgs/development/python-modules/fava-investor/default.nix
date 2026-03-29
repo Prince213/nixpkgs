@@ -27,6 +27,10 @@ buildPythonPackage rec {
     hash = "sha256-WuXbZcia0n9SoiCSB2SkMUjBHsMOA0gCIf9ZEU9pTPA=";
   };
 
+  patches = [
+    ./test_asset_allocation.patch
+  ];
+
   build-system = [
     setuptools
     setuptools-scm

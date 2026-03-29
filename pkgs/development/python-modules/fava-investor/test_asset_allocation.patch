@@ -1,0 +1,20 @@
+--- a/fava_investor/modules/assetalloc_class/test_asset_allocation.py
++++ b/fava_investor/modules/assetalloc_class/test_asset_allocation.py
+@@ -172,7 +172,7 @@
+         result = self.run_with_args(assetalloc_class.assetalloc_class, filename)
+         expected_output = """
+         asset_type           amount    percentage
+-        -----------------  --------  ------------
++        -------------  --------  ------------
+         Total               140,000        100.0%
+           equity            140,000        100.0%
+             international   140,000        100.0%
+@@ -254,7 +254,7 @@
+         result = self.run_with_args(assetalloc_class.assetalloc_class, filename)
+         expected_output = """
+         asset_type           amount    percentage
+-        -----------------  --------  ------------
++        -------------  --------  ------------
+         Total                 1,250        100.0%
+           equity              1,250        100.0%
+             domestic            500         40.0%
