@@ -54,6 +54,10 @@ let
     "s390x-linux"
     "x86_64-linux"
 
+    # Midipix
+    "i686-midipix"
+    "x86_64-midipix"
+
     # MMIXware
     "mmix-mmixware"
 
@@ -186,6 +190,7 @@ in
     });
   illumos = filterDoubles predicates.isSunOS;
   linux = filterDoubles predicates.isLinux;
+  midipix = filterDoubles predicates.isMidipix;
   netbsd = filterDoubles predicates.isNetBSD;
   openbsd = filterDoubles predicates.isOpenBSD;
   unix = filterDoubles predicates.isUnix;
