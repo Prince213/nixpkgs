@@ -1,0 +1,1679 @@
+--- a/configure.ac
++++ b/configure.ac
+@@ -537,6 +537,8 @@
+ 	;;
+     *-*-darwin* | *-*-aix*)
+ 	;;
++    *-*-midipix*)
++	;;
+     nvptx*-*-* | amdgcn*-*-*)
+ 	;;
+     *)
+--- /dev/null
++++ b/gcc/config/i386/midipix.cc
+@@ -0,0 +1,565 @@
++/* Midipix target interfaces.
++   Copyright (C) 2014-2025 Z. Gilboa, Free Software Foundation, Inc.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#define IN_TARGET_CODE 1
++
++#include "config.h"
++#include "system.h"
++#include "coretypes.h"
++#include "backend.h"
++#include "rtl.h"
++#include "tree.h"
++#include "memmodel.h"
++#include "tm_p.h"
++#include "output.h"
++#include "flags.h"
++#include "emit-rtl.h"
++#include "cgraph.h"
++#include "diagnostic.h"
++#include "fold-const.h"
++#include "stringpool.h"
++#include "attribs.h"
++#include "varasm.h"
++
++/* Common specs required by winnt.cc when compiled for midipix.
++   These must have external linkage (extern) because winnt.cc is compiled
++   as a separate translation unit (midipix_winnt_common.o) and references
++   them via the extern declarations in midipix_winnt_common.h.  In C++,
++   const at namespace scope defaults to internal linkage.  */
++extern const int TARGET_NOP_FUN_DLLIMPORT = 0;
++extern const int use_pe_aligned_common = 1;
++extern const int flag_writable_rel_rdata = 0;
++
++static const char winnt_ptrsize_long[] = ".long";
++static const char winnt_ptrsize_quad[] = ".quad";
++
++#define TARGET_SEH_WINNT   (TARGET_SEH && TARGET_NT64)
++#define TARGET_SEH_MIDIPIX (TARGET_SEH && TARGET_NT32)
++
++
++/* ---------- debugging ---------- */
++
++unsigned int
++midipix_dbx_get_register_number (unsigned int n)
++{
++  if (TARGET_NT64)
++    return debugger64_register_map[n];
++  else if (dwarf_debuginfo_p ())
++    return svr4_debugger_register_map[n];
++  else
++    return debugger_register_map[n];
++}
++
++unsigned int
++midipix_dbx_get_dwarf_frame_register_number (unsigned int n)
++{
++  if (TARGET_NT64)
++    return debugger64_register_map[n];
++  else
++    return svr4_debugger_register_map[n];
++}
++
++void
++midipix_asm_output_dwarf_offset (FILE *f, unsigned size,
++				 const char *label,
++				 section *sect ATTRIBUTE_UNUSED)
++{
++  if (size == 4 || size == 8)
++    {
++      fputs ("\t.secrel32\t", f);
++      assemble_name (f, label);
++      if (size == 8)
++	fputs ("\n\t.long\t0", f);
++    }
++  else
++    gcc_unreachable ();
++}
++
++
++/* ---------- assembler labels ---------- */
++
++void
++midipix_asm_output_label_ref (FILE *f, const char *name)
++{
++  if (*name != FASTCALL_PREFIX)
++    fputs (user_label_prefix, f);
++  fputs (name, f);
++}
++
++void
++midipix_asm_generate_internal_label (char *buf, const char *prefix,
++				     unsigned long number)
++{
++  sprintf (buf, "*%s%s%ld", LOCAL_LABEL_PREFIX, prefix, (long) number);
++}
++
++
++/* ---------- GOT entry generation ---------- */
++
++static void
++midipix_pe_create_got_entry (FILE *stream, const char *name, tree decl)
++{
++  int visibility;
++  const char *ptrsize;
++
++  if (flag_assume_static_linking)
++    return;
++
++  ptrsize = TARGET_64BIT ? winnt_ptrsize_quad : winnt_ptrsize_long;
++  visibility = DECL_VISIBILITY (decl);
++
++  /* gotstrs$... */
++  if (visibility == VISIBILITY_DEFAULT
++      || visibility == VISIBILITY_PROTECTED)
++    {
++      fputs ("\n", stream);
++      fputs (GAS_SECTION, stream);
++      fputs (GOTSTRS_SECTION_NAME "$", stream);
++      assemble_name (stream, name);
++      fputs (GOT_SECTION_ATTR, stream);
++
++      fputs ("\n.symstr_", stream);
++      assemble_name (stream, name);
++      fputs (":\n\t.ascii\t\"", stream);
++      assemble_name (stream, name);
++      fputs ("\\0\"\n\t.linkonce discard\n\n", stream);
++    }
++
++  /* dsosyms$... */
++  fputs ("\n", stream);
++  fputs (GAS_SECTION, stream);
++  fputs (GOTSYMS_SECTION_NAME "$", stream);
++  assemble_name (stream, name);
++  fputs (GOT_SECTION_ATTR, stream);
++  fputs ("\n\t.linkonce discard\n\n", stream);
++
++  /* __imp_... */
++  fputs ("\n\t.global __imp_", stream);
++  assemble_name (stream, name);
++  fputs ("\n__imp_", stream);
++  assemble_name (stream, name);
++  fputs (":\n\t", stream);
++  fputs (ptrsize, stream);
++  fputs ("\t", stream);
++  assemble_name (stream, name);
++  fputs ("\n", stream);
++
++  if (visibility == VISIBILITY_DEFAULT
++      || visibility == VISIBILITY_PROTECTED)
++    {
++      fputs ("\n\t.rva\t.symstr_", stream);
++      assemble_name (stream, name);
++      fputs ("\n", stream);
++    }
++  else
++    fputs ("\n\t.long\t0\n", stream);
++
++  if (TARGET_64BIT)
++    fputs ("\t.long\t0\n", stream);
++  fputs ("\n\n", stream);
++
++  /* .symattr section for hidden/internal symbols.  */
++  if (visibility == VISIBILITY_HIDDEN
++      || visibility == VISIBILITY_INTERNAL)
++    {
++      fputs ("\n", stream);
++      fputs (GAS_SECTION, stream);
++      fputs (SYMATTR_SECTION_NAME, stream);
++      fputs (SYMATTR_SECTION_ATTR, stream);
++
++      fputs ("\n.symattr.hidden.", stream);
++      assemble_name (stream, name);
++      fputs (":\n\n", stream);
++    }
++}
++
++static void
++midipix_asm_reestablish_section (FILE *f, section *sect)
++{
++  section *tree_section = in_section;
++  in_section = NULL;
++
++  if (tree_section)
++    switch_to_section (tree_section);
++  else if (sect == bss_noswitch_section)
++    switch_to_section (bss_section);
++  else if (sect == data_section)
++    switch_to_section (data_section);
++  else if (sect && (sect->common.flags & SECTION_NOSWITCH))
++    (void) 0;
++  else if (sect)
++    switch_to_section (sect);
++  else
++    fputs ("\t.text\n", f);
++}
++
++void
++midipix_asm_output_got_entry (FILE *f, const char *name,
++			      tree decl, section *sect)
++{
++  if (!decl || !TREE_PUBLIC (decl))
++    return;
++
++  midipix_pe_create_got_entry (f, name, decl);
++  midipix_asm_reestablish_section (f, sect);
++}
++
++
++/* ---------- object / function declarations ---------- */
++
++void
++midipix_asm_declare_object_name (FILE *f, const char *name, tree decl)
++{
++  mingw_pe_maybe_record_exported_symbol (decl, name, 1);
++  ASM_OUTPUT_LABEL (f, name);
++}
++
++void
++midipix_asm_drectve_section (void)
++{
++  in_section = NULL;
++  fprintf (asm_out_file, "%s%s\n", GAS_SECTION, DRECTVE_SECTION_NAME);
++}
++
++int
++midipix_target_use_local_thunk_alias (tree decl)
++{
++  return !DECL_ONE_ONLY (decl);
++}
++
++void
++midipix_asm_output_external (FILE *f ATTRIBUTE_UNUSED,
++			     tree decl,
++			     const char *name)
++{
++  if (TREE_CODE (decl) == FUNCTION_DECL)
++    i386_pe_record_external_function (decl, name);
++}
++
++void
++midipix_asm_output_external_libcall (FILE *f, rtx fn)
++{
++  mingw_pe_declare_type (f, XSTR (fn, 0), true, true);
++}
++
++void
++midipix_asm_output_def_from_decls (FILE *f, tree decl, tree target)
++{
++  const char *sym = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl));
++
++  mingw_pe_maybe_record_exported_symbol (decl, sym, 0);
++
++  if (TREE_CODE (decl) == FUNCTION_DECL)
++    mingw_pe_declare_type (f, sym, TREE_PUBLIC (decl), true);
++
++  ASM_OUTPUT_DEF (f, sym, IDENTIFIER_POINTER (target));
++
++  if (!DECL_WEAK (decl))
++    midipix_asm_output_got_entry (f, sym, decl, NULL);
++}
++
++
++/* ---------- visibility ---------- */
++
++void
++midipix_i386_pe_assemble_visibility (tree decl ATTRIBUTE_UNUSED,
++				     int visible ATTRIBUTE_UNUSED)
++{
++  /* Visibility is handled via midipix_pe_create_got_entry.  */
++}
++
++
++/* ---------- SEH hook dispatch ---------- */
++
++void
++midipix_seh_hook__pe_seh_init (FILE *f)
++{
++  if (TARGET_SEH_WINNT)
++    i386_pe_seh_init (f);
++}
++
++void
++midipix_seh_hook__pe_seh_end_prologue (FILE *f)
++{
++  if (TARGET_SEH_WINNT)
++    i386_pe_seh_end_prologue (f);
++}
++
++void
++midipix_seh_hook__pe_seh_unwind_emit (FILE *f, rtx_insn *insn)
++{
++  if (TARGET_SEH_WINNT)
++    i386_pe_seh_unwind_emit (f, insn);
++}
++
++void
++midipix_seh_hook__pe_seh_emit_except_personality (rtx personality)
++{
++  fputs ("\t.seh_handler\t", asm_out_file);
++  fputs (".", asm_out_file);
++  output_addr_const (asm_out_file, personality);
++  fputs (", @unwind, @except\n", asm_out_file);
++}
++
++void
++midipix_seh_hook__pe_seh_init_sections (void)
++{
++  exception_section
++    = get_unnamed_section (0, output_section_asm_op,
++			   "\t.seh_handlerdata");
++}
++
++
++/* ---------- unwind info type ---------- */
++
++enum unwind_info_type
++midipix_except_unwind_info (struct gcc_options *opts ATTRIBUTE_UNUSED)
++{
++  return UI_SEH;
++}
++
++
++/* ---------- function sections ---------- */
++
++section *
++midipix_i386_pe_function_section (tree decl, enum node_frequency freq,
++				  bool startup, bool exit_p)
++{
++  const char *fname;
++  bool weak;
++
++  fname = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl));
++  weak = (DECL_DLLIMPORT_P (decl) && DECL_WEAK (decl));
++
++  if (weak)
++    {
++      char *secname;
++      section *s;
++      size_t len = strlen (fname) + 7;
++
++      secname = (char *) xmalloc (len);
++      snprintf (secname, len, ".text$%s", fname);
++      s = get_named_section (decl, secname, 1);
++      free (secname);
++      return s;
++    }
++
++  return NULL;
++}
++
++
++/* ---------- common output ---------- */
++
++void
++midipix_i386_pe_asm_output_aligned_decl_common (FILE *stream, tree decl,
++						const char *name,
++						HOST_WIDE_INT size,
++						HOST_WIDE_INT align)
++{
++  i386_pe_asm_output_aligned_decl_common (stream, decl, name, size, align);
++}
++
++
++/* ---------- function boundaries ---------- */
++
++void
++midipix_i386_pe_start_function (FILE *f, const char *name, tree decl)
++{
++  i386_pe_start_function (f, name, decl);
++}
++
++void
++midipix_i386_pe_end_function (FILE *f, const char *name, tree decl)
++{
++  if (cfun->is_thunk)
++    {
++      midipix_asm_output_got_entry (f, name, decl, NULL);
++      return;
++    }
++
++  i386_pe_end_function (f, name, decl);
++
++  if (decl && !DECL_WEAK (decl))
++    midipix_asm_output_got_entry (f, name, decl, NULL);
++}
++
++
++/* ---------- weak symbols ---------- */
++
++void
++midipix_i386_pe_asm_weaken_decl (FILE *f, tree decl,
++				 const char *name,
++				 const char *alias ATTRIBUTE_UNUSED)
++{
++  midipix_asm_output_got_entry (f, name, decl, NULL);
++  fputs ("\t.weak\t", f);
++  assemble_name (f, name);
++  fputs ("\n", f);
++}
++
++void
++midipix_i386_pe_asm_weaken_label (FILE *f, const char *name)
++{
++  midipix_i386_pe_asm_weaken_decl (f, NULL_TREE, name, NULL);
++}
++
++
++/* ---------- DLL import ---------- */
++
++int
++midipix_symbol_ref_dllimport_p (rtx symbol)
++{
++  tree decl = SYMBOL_REF_DECL (symbol);
++
++  if (!decl || !TREE_PUBLIC (decl) || flag_assume_static_linking)
++    return 0;
++
++  return (DECL_VISIBILITY (decl) == VISIBILITY_DEFAULT)
++	 || !DECL_VISIBILITY_SPECIFIED (decl);
++}
++
++
++/* ---------- integer assembly with GOT ---------- */
++
++bool
++midipix_asm_assemble_integer (rtx x, unsigned int size, int aligned_p)
++{
++  rtx xref, xoff;
++  tree decl;
++  section *sect;
++  const char *name;
++  const char *ptrsize;
++  const char *secname;
++  const char *sortname;
++  char namebuf[2048];
++  bool is_extern_ref;
++  int visibility;
++
++  if (flag_assume_static_linking)
++    return default_assemble_integer (x, size, aligned_p);
++
++  if (GET_CODE (x) == CONST)
++    {
++      xoff = XEXP (x, 0);
++      xref = XEXP (xoff, 0);
++      xoff = XEXP (xoff, 1);
++    }
++  else
++    {
++      xref = x;
++      xoff = NULL_RTX;
++    }
++
++  decl = NULL_TREE;
++  is_extern_ref = (GET_CODE (xref) == SYMBOL_REF
++		   && (decl = SYMBOL_REF_DECL (xref)) != NULL_TREE
++		   && DECL_P (decl)
++		   && DECL_EXTERNAL (decl)
++		   && TREE_PUBLIC (decl));
++
++  /* C++ typeinfo.  */
++  is_extern_ref |= (GET_CODE (xref) == SYMBOL_REF
++		     && SYMBOL_REF_DECL (xref) == NULL_TREE);
++
++  visibility = (is_extern_ref && decl
++		&& DECL_VISIBILITY_SPECIFIED (decl))
++    ? DECL_VISIBILITY (decl)
++    : VISIBILITY_DEFAULT;
++
++  if (!is_extern_ref || visibility != VISIBILITY_DEFAULT)
++    return default_assemble_integer (x, size, aligned_p);
++
++  name = XSTR (xref, 0);
++  ptrsize = TARGET_64BIT ? winnt_ptrsize_quad : winnt_ptrsize_long;
++
++  if (in_section == data_section)
++    sect = data_section;
++  else if (in_section == readonly_data_section)
++    sect = readonly_data_section;
++  else if (in_section && decl)
++    sect = get_variable_section (decl, false);
++  else if (xoff)
++    sect = data_section;
++  else
++    sect = NULL;
++
++  fputs ("1:\n", asm_out_file);
++
++  fputs ("\t", asm_out_file);
++  fputs (ptrsize, asm_out_file);
++  fputs ("\t0", asm_out_file);
++
++  if (xoff && INTVAL (xoff) < 0)
++    fprintf (asm_out_file, HOST_WIDE_INT_PRINT_DEC, INTVAL (xoff));
++  else if (xoff && INTVAL (xoff))
++    {
++      fputs ("+", asm_out_file);
++      fprintf (asm_out_file, HOST_WIDE_INT_PRINT_DEC, INTVAL (xoff));
++    }
++
++  if (!in_section)
++    gcc_unreachable ();
++
++  switch (SECTION_STYLE (in_section))
++    {
++    case SECTION_NAMED:
++      secname = in_section->named.name;
++      break;
++
++    case SECTION_UNNAMED:
++      if (in_section->common.flags & SECTION_WRITE)
++	secname = ".data";
++      else
++	secname = ".rdata";
++      break;
++
++    default:
++      gcc_unreachable ();
++    }
++
++  sortname = strchr (secname, '$');
++  if (!sortname)
++    sortname = secname;
++  else if ((size_t)(sortname - secname) >= sizeof (namebuf))
++    gcc_unreachable ();
++  else
++    {
++      memcpy (namebuf, secname, sortname - secname);
++      namebuf[sortname - secname] = '\0';
++      sortname = namebuf;
++    }
++
++  /* .gotrefs section.  */
++  fputs ("\n\n", asm_out_file);
++  fputs (GAS_SECTION, asm_out_file);
++  fputs (GOTREFS_SECTION_NAME "$", asm_out_file);
++  fputs (sortname, asm_out_file);
++  fputs ("\n", asm_out_file);
++
++  fprintf (asm_out_file, "\t.rva\t%s\n", secname);
++  fprintf (asm_out_file, "\t.long\t1b - %s\n", secname);
++
++  fputs ("\t.rva\t__imp_", asm_out_file);
++  assemble_name (asm_out_file, name);
++  fputs ("\n\n", asm_out_file);
++
++  midipix_asm_reestablish_section (asm_out_file, sect);
++
++  return true;
++}
+--- /dev/null
++++ b/gcc/config/i386/midipix.h
+@@ -0,0 +1,509 @@
++/* Midipix target definitions.
++   Copyright (C) 2014-2025 Z. Gilboa, Free Software Foundation, Inc.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#if TARGET_64BIT_DEFAULT
++#define MULTILIB_DEFAULTS  { "m64" }
++#else
++#define MULTILIB_DEFAULTS  { "m32" }
++#endif
++
++
++/* ---------- types ---------- */
++
++#undef  SIZE_TYPE
++#define SIZE_TYPE  (TARGET_64BIT ? "long unsigned int" : "unsigned int")
++
++#undef  PTRDIFF_TYPE
++#define PTRDIFF_TYPE  (TARGET_64BIT ? "long int" : "int")
++
++#undef  WCHAR_TYPE
++#define WCHAR_TYPE  "int"
++
++#undef  WCHAR_TYPE_SIZE
++#define WCHAR_TYPE_SIZE  32
++
++
++/* ---------- identify sub-targets ---------- */
++
++#define TARGET_NT64  (TARGET_64BIT)
++#define TARGET_NT32  (!TARGET_64BIT)
++
++
++/* ---------- target constraints ---------- */
++
++#undef  TARGET_SEH
++#define TARGET_SEH  (TARGET_NT64 && flag_unwind_tables)
++
++#undef  TARGET_EXCEPT_UNWIND_INFO
++#define TARGET_EXCEPT_UNWIND_INFO  midipix_except_unwind_info
++
++#undef  MAX_OFILE_ALIGNMENT
++#define MAX_OFILE_ALIGNMENT  (8 * (2 * 4096))
++
++#undef  MAX_STACK_ALIGNMENT
++#define MAX_STACK_ALIGNMENT \
++  (TARGET_NT64 ? (8 * 16) : MAX_OFILE_ALIGNMENT)
++
++#undef  STACK_BOUNDARY
++#define STACK_BOUNDARY \
++  (TARGET_NT64 ? (8 * 16) : BITS_PER_WORD)
++
++#undef  STACK_CHECK_BUILTIN
++#define STACK_CHECK_BUILTIN  1
++
++#undef  STACK_CHECK_STATIC_BUILTIN
++#define STACK_CHECK_STATIC_BUILTIN  1
++
++#undef  DEFAULT_ABI
++#define DEFAULT_ABI  (TARGET_NT64 ? MS_ABI : SYSV_ABI)
++
++#undef  MULTIPLE_SYMBOL_SPACES
++#define MULTIPLE_SYMBOL_SPACES  1
++
++#undef  MS_AGGREGATE_RETURN
++#define MS_AGGREGATE_RETURN  0
++
++#undef  DEFAULT_PCC_STRUCT_RETURN
++#define DEFAULT_PCC_STRUCT_RETURN  0
++
++#undef  NO_PROFILE_COUNTERS
++#define NO_PROFILE_COUNTERS  1
++
++#undef  PCC_BITFIELD_TYPE_MATTERS
++#define PCC_BITFIELD_TYPE_MATTERS  1
++
++#undef  SUBTARGET_OVERRIDE_OPTIONS
++#define SUBTARGET_OVERRIDE_OPTIONS \
++  do { flag_pic = (TARGET_NT64 && flag_pic) ? 1 : 0; } while (0)
++
++
++/* ---------- general target options ---------- */
++
++#undef  TARGET_PECOFF
++#define TARGET_PECOFF  1
++
++#undef  HAS_INIT_SECTION
++#define HAS_INIT_SECTION  1
++
++#undef  TARGET_EXECUTABLE_SUFFIX
++#define TARGET_EXECUTABLE_SUFFIX  ""
++
++#undef  MATH_LIBRARY
++#define MATH_LIBRARY  ""
++
++#undef  CHECK_STACK_LIMIT
++#define CHECK_STACK_LIMIT  (4096 - (8 * 32))
++
++#undef  TARGET_DLLIMPORT_DECL_ATTRIBUTES
++#define TARGET_DLLIMPORT_DECL_ATTRIBUTES  1
++
++#define PE_COFF_LEGITIMIZE_EXTERN_DECL(RTX) \
++  (ix86_cmodel == CM_LARGE_PIC || ix86_cmodel == CM_MEDIUM_PIC)
++
++#undef  TARGET_POSIX_IO
++#define TARGET_POSIX_IO  1
++
++#undef  TARGET_SUBTARGET_DEFAULT
++#define TARGET_SUBTARGET_DEFAULT \
++  (MASK_ALIGN_DOUBLE | MASK_80387 | MASK_IEEE_FP | MASK_FLOAT_RETURNS)
++
++#undef  GTHREAD_USE_WEAK
++#define GTHREAD_USE_WEAK  0
++
++
++/* ---------- path macros ---------- */
++
++#undef  NATIVE_SYSTEM_HEADER_DIR
++#define NATIVE_SYSTEM_HEADER_DIR  "/include"
++
++#undef  STANDARD_STARTFILE_PREFIX_1
++#define STANDARD_STARTFILE_PREFIX_1  "/local/lib/"
++
++#undef  STANDARD_STARTFILE_PREFIX_2
++#define STANDARD_STARTFILE_PREFIX_2  "/lib/"
++
++
++/* ---------- specs ---------- */
++
++#undef  ASM_SPEC
++#define ASM_SPEC \
++  "%{m32:--32} %{m64:--64} " \
++  "%{!mno-sse2avx:%{mavx:-msse2avx}} " \
++  "%{msse2avx:%{!mavx:-msse2avx}} "
++
++#undef  CPP_SPEC
++#define CPP_SPEC \
++  "%{posix|mposix:-D_POSIX_SOURCE} " \
++  "%{mntapi:-ffreestanding} "
++
++#undef  LIB_SPEC
++#define LIB_SPEC \
++  "%{shared:-lc} " \
++  "%{pthread:-lpthread} " \
++  "--no-as-needed -lc " \
++  "--as-needed -lpsxscl " \
++  "%{static: --as-needed -lntapi --as-needed -ldalist --as-needed -lpemagine}" \
++  "%{!shared:%{!static:%{!midata: --as-needed -lldso}}}"
++
++#undef  STARTFILE_SPEC
++#define STARTFILE_SPEC \
++  "%{!mforeign:%R/lib/crti.o} " \
++  "%{!shared:%{mposix:%R/lib/crtposix.o}} " \
++  "%{!shared:%{mdinga:%R/lib/crtdinga.o}} " \
++  "%{!shared:%{mldso:%R/lib/%{static:S}crtldso.o}} " \
++  "%{!shared:%{mvrfs:%R/lib/%{static:S}crtvrfs.o}} " \
++  "%{!shared:%{!static:%{midata:%R/lib/crtidata.o}}} " \
++  "%{!shared:%R/lib/%{static:S}crt1.o} " \
++  "%{!shared:%{!mldso:%{!mvrfs:%{!midata:%R/lib/%{static:S}crtldso.o}}}} " \
++  "%{shared:%R/lib/crte.o} " \
++  "crtbegin.o%s "
++
++#undef  ENDFILE_SPEC
++#define ENDFILE_SPEC \
++  "crtend.o%s " \
++  "%R/lib/crtn.o " LIB_SPEC
++
++#undef  LINK_GCC_C_SEQUENCE_SPEC
++#define LINK_GCC_C_SEQUENCE_SPEC \
++  "%{static:--start-group} " \
++  "%L %G " \
++  "%{static:--end-group}%{!static:%G} " \
++  "--no-as-needed -lc "
++
++#define LINK_DSO_SYM_SPEC \
++  "--exclude-symbols=" \
++    "__dso_handle," \
++    "_init,_fini," \
++    "_so_entry_point," \
++    "__so_entry_point," \
++    "__chkstk_ms," \
++    "___chkstk_ms," \
++    "dso_main_routine "
++
++#undef  LINK_SPEC
++#define LINK_SPEC \
++  "%{rdynamic:--export-all-symbols} " \
++  "%{mntapi:-nostdlib} " \
++  "%{static:-static} " \
++  "%{shared:-shared} " \
++  "%{shared:%{moutput-def:--output-def %{o*:%.so.def%*}}} " \
++  "%{shared:%{mout-implib:--out-implib %{o*:%.lib.a%*}}} " \
++  "%{shared:%{mout-dsolib:--out-dsolib %{o*:%.lib.a%*}}} " \
++  "%{!shared:--entry _start} " \
++  "%{!shared:--image-base 0x1920000} " \
++  "%{shared:--entry __so_entry_point} " \
++  "%{shared:--enable-auto-image-base} " \
++  "--subsystem %{mconsole:console;:windows} " \
++  "%{!shared:--tsaware} " \
++  LINK_DSO_SYM_SPEC
++
++#undef  SUBTARGET_EXTRA_SPECS
++#define SUBTARGET_EXTRA_SPECS
++
++
++/* ---------- assembler options ---------- */
++
++#undef  HAVE_GAS_PE_SECREL32_RELOC
++#define HAVE_GAS_PE_SECREL32_RELOC  1
++
++#undef  SUPPORTS_ONE_ONLY
++#define SUPPORTS_ONE_ONLY  1
++
++#define GAS_TAB      "\t"
++#define GAS_SPACE    " "
++#define GAS_SECTION  GAS_TAB ".section" GAS_SPACE
++
++#undef  INIT_SECTION_ASM_OP
++#define INIT_SECTION_ASM_OP  GAS_SECTION ".init"
++
++#define DRECTVE_SECTION_NAME   ".drectve"
++#define RODATA_SECTION_NAME    ".rdata,\"r\""
++#define GOTSYMS_SECTION_NAME   ".dsosyms"
++#define SYMATTR_SECTION_NAME   ".symattr"
++#define GOTSTRS_SECTION_NAME   ".gotstrs"
++#define GOTREFS_SECTION_NAME   ".gotrefs"
++#define GOT_SECTION_ATTR       ",\"r\""
++#define SYMATTR_SECTION_ATTR   ",\"r\""
++
++#ifndef SET_ASM_OP
++#define SET_ASM_OP  "\t.set\t"
++#endif
++
++#undef  READONLY_DATA_SECTION_ASM_OP
++#define READONLY_DATA_SECTION_ASM_OP  GAS_SECTION RODATA_SECTION_NAME
++
++
++/* ---------- debugging ---------- */
++
++#define DWARF2_DEBUGGING_INFO  1
++
++#undef  PREFERRED_DEBUGGING_TYPE
++#define PREFERRED_DEBUGGING_TYPE  DWARF2_DEBUG
++
++#undef  DWARF_FRAME_REGISTERS
++#define DWARF_FRAME_REGISTERS  (TARGET_NT64 ? 33 : 17)
++
++#undef  DBX_REGISTER_NUMBER
++#define DBX_REGISTER_NUMBER(n)  midipix_dbx_get_register_number (n)
++
++#undef  DWARF_FRAME_REGNUM
++#define DWARF_FRAME_REGNUM(n)  midipix_dbx_get_dwarf_frame_register_number (n)
++
++#undef  ASM_OUTPUT_DWARF_OFFSET
++#define ASM_OUTPUT_DWARF_OFFSET(FILE, SIZE, LABEL, OFFSET, SECTION) \
++  midipix_asm_output_dwarf_offset ((FILE), (SIZE), (LABEL), (SECTION))
++
++
++/* ---------- assembler labels ---------- */
++
++#if ! defined (USE_MIDIPIX_LEADING_UNDERSCORES)
++#undef  USER_LABEL_PREFIX
++#define USER_LABEL_PREFIX  (TARGET_NT64 ? "" : "_")
++
++#undef  LOCAL_LABEL_PREFIX
++#define LOCAL_LABEL_PREFIX  (TARGET_NT64 ? "." : "")
++
++#undef  LPREFIX
++#define LPREFIX  (TARGET_NT64 ? ".L" : "L")
++
++#undef  ASM_GENERATE_INTERNAL_LABEL
++#define ASM_GENERATE_INTERNAL_LABEL  midipix_asm_generate_internal_label
++#endif
++
++#undef  ASM_COMMENT_START
++#define ASM_COMMENT_START  "\t#"
++
++#undef  ASM_OUTPUT_LABELREF
++#define ASM_OUTPUT_LABELREF  midipix_asm_output_label_ref
++
++
++/* ---------- object/function declaration hooks ---------- */
++
++#undef  ASM_DECLARE_OBJECT_NAME
++#define ASM_DECLARE_OBJECT_NAME  midipix_asm_declare_object_name
++
++#undef  ASM_OUTPUT_DEF_FROM_DECLS
++#define ASM_OUTPUT_DEF_FROM_DECLS  midipix_asm_output_def_from_decls
++
++#undef  ASM_OUTPUT_EXTERNAL
++#define ASM_OUTPUT_EXTERNAL  midipix_asm_output_external
++
++#undef  ASM_OUTPUT_EXTERNAL_LIBCALL
++#define ASM_OUTPUT_EXTERNAL_LIBCALL  midipix_asm_output_external_libcall
++
++#undef  TARGET_USE_LOCAL_THUNK_ALIAS_P
++#define TARGET_USE_LOCAL_THUNK_ALIAS_P  midipix_target_use_local_thunk_alias
++
++#undef  drectve_section
++#define drectve_section  midipix_asm_drectve_section
++
++
++/* ---------- common target hooks ---------- */
++
++#undef  ASM_DECLARE_FUNCTION_NAME
++#define ASM_DECLARE_FUNCTION_NAME  midipix_i386_pe_start_function
++
++#undef  ASM_DECLARE_FUNCTION_SIZE
++#define ASM_DECLARE_FUNCTION_SIZE  midipix_i386_pe_end_function
++
++#undef  TARGET_ASM_ASSEMBLE_VISIBILITY
++#define TARGET_ASM_ASSEMBLE_VISIBILITY  midipix_i386_pe_assemble_visibility
++
++#undef  TARGET_ASM_INTEGER
++#define TARGET_ASM_INTEGER  midipix_asm_assemble_integer
++
++#undef  TARGET_ASM_FILE_END
++#define TARGET_ASM_FILE_END  mingw_pe_file_end
++
++#undef  ASM_OUTPUT_ALIGNED_BSS
++#define ASM_OUTPUT_ALIGNED_BSS(FILE, DECL, NAME, SIZE, ALIGN) \
++  asm_output_aligned_bss ((FILE), (DECL), (NAME), (SIZE), (ALIGN))
++
++#undef  ASM_OUTPUT_ALIGNED_DECL_COMMON
++#define ASM_OUTPUT_ALIGNED_DECL_COMMON \
++  midipix_i386_pe_asm_output_aligned_decl_common
++
++#undef  TARGET_ASM_UNIQUE_SECTION
++#define TARGET_ASM_UNIQUE_SECTION  mingw_pe_unique_section
++
++#undef  TARGET_ASM_NAMED_SECTION
++#define TARGET_ASM_NAMED_SECTION  mingw_pe_asm_named_section
++
++#undef  TARGET_SECTION_TYPE_FLAGS
++#define TARGET_SECTION_TYPE_FLAGS  mingw_pe_section_type_flags
++
++#undef  TARGET_MANGLE_ASSEMBLER_NAME
++#define TARGET_MANGLE_ASSEMBLER_NAME  i386_pe_mangle_assembler_name
++
++#undef  SUBTARGET_ENCODE_SECTION_INFO
++#define SUBTARGET_ENCODE_SECTION_INFO  mingw_pe_encode_section_info
++
++#undef  TARGET_VALID_DLLIMPORT_ATTRIBUTE_P
++#define TARGET_VALID_DLLIMPORT_ATTRIBUTE_P  mingw_pe_valid_dllimport_attribute_p
++
++#undef  TARGET_CXX_ADJUST_CLASS_AT_DEFINITION
++#define TARGET_CXX_ADJUST_CLASS_AT_DEFINITION  i386_pe_adjust_class_at_definition
++
++#undef  SUBTARGET_MANGLE_DECL_ASSEMBLER_NAME
++#define SUBTARGET_MANGLE_DECL_ASSEMBLER_NAME  i386_pe_mangle_decl_assembler_name
++
++#undef  TARGET_ASM_RELOC_RW_MASK
++#define TARGET_ASM_RELOC_RW_MASK  midipix_i386_pe_reloc_rw_mask
++
++#undef  TARGET_ASM_LTO_START
++#define TARGET_ASM_LTO_START  mingw_pe_asm_lto_start
++
++#undef  TARGET_ASM_LTO_END
++#define TARGET_ASM_LTO_END  mingw_pe_asm_lto_end
++
++#undef  ASM_OUTPUT_ALIGN
++#define ASM_OUTPUT_ALIGN(FILE, LOG) \
++  do { if ((LOG) != 0) fprintf ((FILE), "\t.align %d\n", 1 << (LOG)); } while (0)
++
++
++/* ---------- libgcc ---------- */
++
++#define __CXX_SEH__  1
++
++#ifdef IN_LIBGCC2
++#define LIBGCC2_TF_CEXT  q
++#define LIBGCC2_TF_SIZE  113
++
++#undef  TF_SIZE
++#define TF_SIZE  LIBGCC2_TF_SIZE
++
++#undef  LIBGCC2_HAS_TF_MODE
++#define LIBGCC2_HAS_TF_MODE  1
++#endif
++
++#undef  DO_GLOBAL_DTORS_BODY
++#define DO_GLOBAL_DTORS_BODY  (void)0
++
++
++/* ---------- SEH hooks ---------- */
++
++#undef  TARGET_ASM_UNWIND_EMIT
++#define TARGET_ASM_UNWIND_EMIT  midipix_seh_hook__pe_seh_unwind_emit
++#undef  TARGET_ASM_UNWIND_EMIT_BEFORE_INSN
++#define TARGET_ASM_UNWIND_EMIT_BEFORE_INSN  false
++#undef  TARGET_ASM_FUNCTION_END_PROLOGUE
++#define TARGET_ASM_FUNCTION_END_PROLOGUE  midipix_seh_hook__pe_seh_end_prologue
++#undef  TARGET_ASM_EMIT_EXCEPT_PERSONALITY
++#define TARGET_ASM_EMIT_EXCEPT_PERSONALITY  midipix_seh_hook__pe_seh_emit_except_personality
++#undef  TARGET_ASM_INIT_SECTIONS
++#define TARGET_ASM_INIT_SECTIONS  midipix_seh_hook__pe_seh_init_sections
++#define SUBTARGET_ASM_UNWIND_INIT  midipix_seh_hook__pe_seh_init
++
++
++/* ---------- OS builtins ---------- */
++
++#define TARGET_OS_CPP_BUILTINS() \
++  do \
++    { \
++      builtin_define ("__PE__"); \
++      builtin_define ("__PE_VISIBILITY__"); \
++      builtin_define ("__midipix__"); \
++      builtin_define ("__dllexport=__attribute__((__dllexport__))"); \
++      builtin_define ("__dllimport=__attribute__((__dllimport__))"); \
++      builtin_define ("__cdecl=__attribute__((__cdecl__))"); \
++      builtin_define ("__stdcall=__attribute__((__stdcall__))"); \
++      builtin_define ("__fastcall=__attribute__((__fastcall__))"); \
++      if (TARGET_NT64) \
++        builtin_define ("__NT64"); \
++      else \
++        builtin_define ("__NT32"); \
++    } \
++  while (0)
++
++#define EXTRA_OS_CPP_BUILTINS()
++
++
++/* ---------- target-specific definitions (compiler build only) ---------- */
++
++#if !defined(IN_TARGET_LIBRARY_BUILD) && !defined(USED_FOR_TARGET)
++
++#undef  BIGGEST_FIELD_ALIGNMENT
++#define BIGGEST_FIELD_ALIGNMENT  64
++
++#undef  ASM_WEAKEN_DECL
++#define ASM_WEAKEN_DECL  midipix_i386_pe_asm_weaken_decl
++
++#undef  ASM_WEAKEN_LABEL
++#define ASM_WEAKEN_LABEL  midipix_i386_pe_asm_weaken_label
++
++#undef  TARGET_ASM_FUNCTION_SECTION
++#define TARGET_ASM_FUNCTION_SECTION  midipix_i386_pe_function_section
++
++#define SUBTARGET_ATTRIBUTE_TABLE \
++  { "selectany", 0, 0, true, false, false, false, \
++    mingw_handle_selectany_attribute, NULL }
++
++#undef  SYMBOL_REF_DLLIMPORT_P
++#define SYMBOL_REF_DLLIMPORT_P  midipix_symbol_ref_dllimport_p
++
++/* Forward declarations.  */
++extern void midipix_asm_drectve_section (void);
++extern void midipix_asm_generate_internal_label (char *, const char *,
++						 unsigned long);
++extern int  midipix_target_use_local_thunk_alias (tree);
++extern void midipix_i386_pe_assemble_visibility (tree, int);
++extern bool midipix_asm_assemble_integer (rtx, unsigned int, int);
++
++extern void midipix_asm_output_external (FILE *, tree, const char *);
++extern void midipix_asm_output_def_from_decls (FILE *, tree, tree);
++extern void midipix_asm_output_external_libcall (FILE *, rtx);
++
++extern void midipix_asm_output_got_entry (FILE *, const char *, tree,
++					  section *);
++extern void midipix_asm_declare_object_name (FILE *, const char *, tree);
++extern void midipix_i386_pe_start_function (FILE *, const char *, tree);
++extern void midipix_i386_pe_end_function (FILE *, const char *, tree);
++extern void midipix_asm_output_label_ref (FILE *, const char *);
++extern void midipix_i386_pe_asm_weaken_label (FILE *, const char *);
++extern void midipix_i386_pe_asm_weaken_decl (FILE *, tree, const char *,
++					     const char *);
++extern void midipix_asm_output_dwarf_offset (FILE *, unsigned,
++					     const char *, section *);
++
++extern unsigned int midipix_dbx_get_register_number (unsigned int);
++extern unsigned int midipix_dbx_get_dwarf_frame_register_number (unsigned int);
++
++extern enum unwind_info_type midipix_except_unwind_info (struct gcc_options *);
++
++extern section *midipix_i386_pe_function_section (tree, enum node_frequency,
++						  bool, bool);
++extern void midipix_i386_pe_asm_output_aligned_decl_common (FILE *, tree,
++							    const char *,
++							    HOST_WIDE_INT,
++							    HOST_WIDE_INT);
++extern int midipix_symbol_ref_dllimport_p (rtx);
++
++extern void midipix_seh_hook__pe_seh_init (FILE *);
++extern void midipix_seh_hook__pe_seh_end_prologue (FILE *);
++extern void midipix_seh_hook__pe_seh_unwind_emit (FILE *, rtx_insn *);
++extern void midipix_seh_hook__pe_seh_emit_except_personality (rtx);
++extern void midipix_seh_hook__pe_seh_init_sections (void);
++
++static inline int
++midipix_i386_pe_reloc_rw_mask (void)
++{
++  return 0;
++}
++
++#endif /* !IN_TARGET_LIBRARY_BUILD && !USED_FOR_TARGET */
+--- /dev/null
++++ b/gcc/config/i386/midipix.opt
+@@ -0,0 +1,71 @@
++; Midipix target options.
++; Copyright (C) 2014-2025 Z. Gilboa, Free Software Foundation, Inc.
++;
++; This file is part of GCC.
++;
++; GCC is free software; you can redistribute it and/or modify it under
++; the terms of the GNU General Public License as published by the Free
++; Software Foundation; either version 3, or (at your option) any later
++; version.
++;
++; GCC is distributed in the hope that it will be useful, but WITHOUT ANY
++; WARRANTY; without even the implied warranty of MERCHANTABILITY or
++; FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++; for more details.
++;
++; You should have received a copy of the GNU General Public License
++; along with GCC; see the file COPYING3.  If not see
++; <http://www.gnu.org/licenses/>.
++
++posix
++Driver
++
++mposix
++Target
++Always join or create a posix session.
++
++mstatic
++Target Var(flag_assume_static_linking)
++Assume static linking; set default visibility to internal.
++
++mout-dsolib
++Target
++Generate a custom (.dsometa) import library for shared libraries.
++
++mout-implib
++Target
++Generate a legacy (.idata) import library for shared libraries.
++
++moutput-def
++Target
++Generate a symbol definition file for shared libraries.
++
++mntapi
++Target
++Operate in a free-standing Native API environment.
++
++mdinga
++Target
++Debug process initialization using a ding alarm.
++
++midata
++Target
++Do not use a custom dynamic loader for process initialization.
++
++mldso
++Target
++Use a dynamic loader.
++
++mvrfs
++Target
++Default to a virtual root file system (standalone application).
++
++mforeign
++Target
++Do not link crti.o into the output executable or dynamic library.
++
++mconsole
++Target
++Set image subsystem to console (default is windows).
++
++; Retain blank line above.
+--- /dev/null
++++ b/gcc/config/i386/midipix.opt.urls
+@@ -0,0 +1,3 @@
++; Autogenerated by regenerate-opt-urls.py from gcc/config/i386/midipix.opt
++; This file is intentionally empty as midipix options do not have
++; upstream documentation URLs yet.
+--- /dev/null
++++ b/gcc/config/i386/midipix_winnt_common.h
+@@ -0,0 +1,47 @@
++/* Midipix common definitions and source-compatibility layer.
++   Copyright (C) 2014-2025 Z. Gilboa, Free Software Foundation, Inc.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#ifndef MIDIPIX_WINNT_COMMON_H
++#define MIDIPIX_WINNT_COMMON_H
++
++/* Source-compatibility shims for compiling mingw/winnt.cc in
++   midipix context via --include.  */
++
++#ifndef IN_TARGET_LIBRARY_BUILD
++  extern const int flag_writable_rel_rdata;
++#else
++  static const int x_flag_writable_rel_rdata = 0;
++  #define flag_writable_rel_rdata x_flag_writable_rel_rdata
++#endif
++
++#ifndef IN_TARGET_LIBRARY_BUILD
++  extern const int use_pe_aligned_common;
++#else
++  static const int x_use_pe_aligned_common = 1;
++  #define use_pe_aligned_common x_use_pe_aligned_common
++#endif
++
++#ifndef IN_TARGET_LIBRARY_BUILD
++  extern const int TARGET_NOP_FUN_DLLIMPORT;
++#else
++  static const int x_TARGET_NOP_FUN_DLLIMPORT = 0;
++  #define TARGET_NOP_FUN_DLLIMPORT x_TARGET_NOP_FUN_DLLIMPORT
++#endif
++
++#endif /* MIDIPIX_WINNT_COMMON_H */
+--- /dev/null
++++ b/gcc/config/i386/t-midipix
+@@ -0,0 +1,87 @@
++# Midipix target-specific build recipes.
++# Copyright (C) 2014-2025 Z. Gilboa, Free Software Foundation, Inc.
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3, or (at your option)
++# any later version.
++#
++# GCC is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++midipix_winnt_common.o: $(srcdir)/config/mingw/winnt.cc $(CONFIG_H) \
++  $(SYSTEM_H) coretypes.h \
++  $(TM_H) $(RTL_H) $(REGS_H) hard-reg-set.h output.h $(TREE_H) flags.h \
++  $(TM_P_H) $(HASH_TABLE_H) $(GGC_H) $(LTO_STREAMER_H)
++	$(COMPILER) -c $(ALL_COMPILERFLAGS) $(ALL_CPPFLAGS) $(INCLUDES) \
++	--include=$(srcdir)/config/i386/midipix_winnt_common.h \
++	$(srcdir)/config/mingw/winnt.cc -o $@
++
++midipix_winnt_cxx.o: $(srcdir)/config/mingw/winnt-cxx.cc $(CONFIG_H) \
++  $(SYSTEM_H) coretypes.h \
++  $(TM_H) $(TREE_H) flags.h \
++  $(TM_P_H) $(HASHTAB_H) $(GGC_H)
++	$(COMPILER) -c $(ALL_COMPILERFLAGS) $(ALL_CPPFLAGS) $(INCLUDES) \
++	--include=$(srcdir)/config/i386/midipix_winnt_common.h \
++	$(srcdir)/config/mingw/winnt-cxx.cc -o $@
++
++midipix_winnt_stubs.o: $(srcdir)/config/mingw/winnt-stubs.cc $(CONFIG_H) \
++  $(SYSTEM_H) coretypes.h \
++  $(TM_H) $(RTL_H) $(REGS_H) hard-reg-set.h output.h $(TREE_H) flags.h \
++  $(TM_P_H) $(HASHTAB_H) $(GGC_H)
++	$(COMPILER) -c $(ALL_COMPILERFLAGS) $(ALL_CPPFLAGS) $(INCLUDES) \
++	$(srcdir)/config/mingw/winnt-stubs.cc -o $@
++
++winnt-dll.o: $(srcdir)/config/mingw/winnt-dll.cc $(CONFIG_H) $(SYSTEM_H) \
++  coretypes.h \
++  $(TM_H) $(TREE_H) flags.h \
++  $(TM_P_H) $(HASH_TABLE_H) $(GGC_H)
++	$(COMPILER) -c $(ALL_COMPILERFLAGS) $(ALL_CPPFLAGS) $(INCLUDES) \
++	$(srcdir)/config/mingw/winnt-dll.cc -o $@
++
++midipix.o: $(srcdir)/config/i386/midipix.cc $(CONFIG_H) $(SYSTEM_H) \
++  coretypes.h $(TM_H) $(RTL_H) $(TREE_H) flags.h output.h \
++  $(TM_P_H) $(GGC_H)
++	$(COMPILER) -c $(ALL_COMPILERFLAGS) $(ALL_CPPFLAGS) $(INCLUDES) \
++	$(srcdir)/config/i386/midipix.cc -o $@
++
++STMP_FIXINC = stmp-fixinc
++LIMITS_H_TEST = true
++CUSTOM_CRTSTUFF = yes
++
++SHLIB_EXT = .so
++SHLIB_IMPLIB = @shlib_base_name@.lib.a
++SHLIB_SOVERSION = 1
++SHLIB_SONAME = @shlib_base_name@$(EH_MODEL).so
++SHLIB_MAP = @shlib_map_file@
++SHLIB_OBJS = @shlib_objs@
++SHLIB_DIR = @multilib_dir@
++SHLIB_SLIBDIR_QUAL = @shlib_slibdir_qual@
++SHLIB_MKMAP = $(srcdir)/mkmap-flat.awk
++SHLIB_MKMAP_OPTS = -v pe_dll=libgcc_s$(EH_MODEL).so
++SHLIB_MAPFILES = $(srcdir)/libgcc-std.ver
++
++SHLIB_LINK = $(GCC_FOR_TARGET) \
++	$(LIBGCC2_CFLAGS) \
++	-shared -mout-dsolib \
++	-nodefaultlibs \
++	-o $(SHLIB_DIR)/$(SHLIB_SONAME) \
++	$(SHLIB_OBJS)
++
++SHLIB_INSTALL = \
++	$$(mkinstalldirs) \
++		$$(DESTDIR)$$(slibdir)$(SHLIB_SLIBDIR_QUAL); \
++	$(INSTALL) \
++		$(SHLIB_DIR)/$(SHLIB_SONAME) \
++		$$(DESTDIR)$$(slibdir)$(SHLIB_SLIBDIR_QUAL)/$(SHLIB_SONAME); \
++	$(INSTALL_DATA) \
++		$(SHLIB_DIR)/$(SHLIB_IMPLIB) \
++		$$(DESTDIR)$$(slibdir)$(SHLIB_SLIBDIR_QUAL)/$(SHLIB_IMPLIB);
+--- /dev/null
++++ b/gcc/config/i386/t-midipix-eh
+@@ -0,0 +1,21 @@
++# Midipix exception handling build recipes.
++# Copyright (C) 2014-2025 Z. Gilboa, Free Software Foundation, Inc.
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3, or (at your option)
++# any later version.
++#
++# GCC is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++# Framework-provided exception handling used by all midipix targets.
++EH_MODEL =
+--- a/gcc/config.gcc
++++ b/gcc/config.gcc
+@@ -2320,6 +2320,35 @@
+ 			;;
+ 	esac
+ 	;;
++i[34567]86-*-midipix* | x86_64-*-midipix*)
++	if test x"$with_arch_32" = x; then
++		with_arch_32=pentium4
++	fi
++	if test x"$with_arch_64" = x; then
++		with_arch_64=x86-64
++	fi
++	native_system_header_dir="/include"
++	tm_file="${tm_file} i386/unix.h i386/bsd.h i386/gas.h i386/midipix.h glibc-stdint.h"
++	tm_file="${tm_file} mingw/winnt.h"
++	tm_file="${tm_file} mingw/winnt-dll.h"
++	tmake_file="${tmake_file} i386/t-midipix-eh i386/t-midipix"
++	tmake_file="${tmake_file} t-slibgcc"
++	target_gtfiles="${target_gtfiles} \$(srcdir)/config/mingw/winnt.cc \$(srcdir)/config/mingw/winnt-dll.cc"
++	extra_objs="${extra_objs} midipix_winnt_common.o midipix_winnt_stubs.o winnt-dll.o midipix.o"
++	extra_options="${extra_options} i386/midipix.opt"
++	c_target_objs="${c_target_objs}"
++	cxx_target_objs="${cxx_target_objs} midipix_winnt_cxx.o"
++	gas=yes
++	gnu_ld=yes
++	case ${enable_threads} in
++	"" | yes | posix)
++		thread_file=posix
++		;;
++	esac
++	default_use_cxa_atexit=yes
++	use_gcc_stdint=wrap
++	need_64bit_isa=yes
++	;;
+ x86_64-*-fuchsia*)
+ 	tmake_file="${tmake_file} i386/t-x86_64-elf"
+ 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h fuchsia.h"
+--- a/gcc/config.host
++++ b/gcc/config.host
+@@ -244,6 +244,9 @@
+         ;;
+     esac
+     ;;
++  i[34567]86-*-midipix* | x86_64-*-midipix*)
++    host_exeext=
++    ;;
+   aarch64*-*-darwin*)
+     out_host_hook_obj="${out_host_hook_obj} host-aarch64-darwin.o"
+     host_xmake_file="${host_xmake_file} aarch64/x-darwin"
+--- a/gcc/configure.ac
++++ b/gcc/configure.ac
+@@ -3473,7 +3473,7 @@
+ 	.cfi_startproc
+ 	.cfi_endproc],
+ [case $target_os in
+-  win32 | pe | cygwin* | mingw32*)
++  win32 | pe | cygwin* | mingw32* | midipix*)
+     # Need to check that we generated the correct relocation for the
+     # .debug_frame section.  This was fixed for binutils 2.21.
+     gcc_cv_as_cfi_sections_directive=no
+@@ -4825,7 +4825,7 @@
+ 	   Cygwin DLL exports wrappers to support libstdc++ function replacement.])
+     esac
+     case $target_os in
+-      cygwin* | pe | mingw32*)
++      cygwin* | pe | mingw32* | midipix*)
+ 	# Recent binutils allows the three-operand form of ".comm" on PE.  This
+ 	# definition is used unconditionally to initialise the default state of
+ 	# the target option variable that governs usage of the feature.
+@@ -5726,7 +5726,7 @@
+ [Define if your assembler supports the --gdwarf-5 option.])])
+ 
+  case $target_os in
+-   win32 | pe | cygwin* | mingw32*)
++   win32 | pe | cygwin* | mingw32* | midipix*)
+      section_flags=\"dr\"
+      function_type=".def foo; .scl 2; .type 32; .endef"
+      function_size="";;
+@@ -6512,7 +6512,7 @@
+ fi
+ 
+ case $target_os in
+-  win32 | pe | cygwin* | mingw32*)
++  win32 | pe | cygwin* | mingw32* | midipix*)
+     AC_MSG_CHECKING(broken PE linker dwarf5 support)
+     gcc_cv_ld_broken_pe_dwarf5=yes
+     if test $in_tree_ld = yes ; then
+--- /dev/null
++++ b/libgcc/config/i386/t-midipix
+@@ -0,0 +1,23 @@
++# Midipix target-specific build recipes for libgcc.
++# Copyright (C) 2014-2025 Z. Gilboa, Free Software Foundation, Inc.
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3, or (at your option)
++# any later version.
++#
++# GCC is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++# crtbegin & crtend objects provided by the system libc via mmglue.
++CUSTOM_CRTSTUFF := yes
++CUSTOM_CRTIN := yes
++libgcc-crt-objects =
+--- /dev/null
++++ b/libgcc/config/i386/unwind-midipix.c
+@@ -0,0 +1,33 @@
++/* Midipix unwind functionality.
++   Copyright (C) 2019-2025 Z. Gilboa, Free Software Foundation, Inc.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#define TARGET_PERSONALITY_FUNCTION
++
++#include "unwind-midipix.h"
++#include "unwind-c.c"
++
++int
++__gcc_personality_seh0 (struct __exception_record *erec,
++			void *this_frame,
++			mcontext_t *tctx,
++			struct __dispatcher_context *dctx)
++{
++  return __unwind_exception_filter (erec, this_frame, tctx, dctx,
++				    __gcc_personality_imp);
++}
+--- /dev/null
++++ b/libgcc/config/i386/unwind-midipix.h
+@@ -0,0 +1,97 @@
++/* Midipix unwind ABI mapping.
++   Copyright (C) 2019-2025 Z. Gilboa, Free Software Foundation, Inc.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#ifndef _UNWIND_H
++#define _UNWIND_H
++
++#include <stdint.h>
++#include <sys/unwind.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef long				_sleb128_t;
++typedef unsigned long			_uleb128_t;
++
++typedef uintptr_t			_Unwind_Word;
++typedef intptr_t			_Unwind_Sword;
++
++typedef uintptr_t			_Unwind_Ptr;
++typedef uintptr_t			_Unwind_Internal_Ptr;
++typedef uintptr_t			_Unwind_Exception_Class;
++
++typedef int				_Unwind_Action;
++typedef enum __unwind_reason_code	_Unwind_Reason_Code;
++
++typedef __unwind_personality_routine	_Unwind_Personality_Fn;
++typedef __unwind_exception_cleanup_routine _Unwind_Exception_Cleanup_Fn;
++
++
++#define _Unwind_Exception		__unwind_exception
++#define _Unwind_Context			__unwind_context
++
++#define _URC_NO_REASON			__URC_NO_REASON
++#define _URC_FOREIGN_EXCEPTION_CAUGHT	__URC_FOREIGN_EXCEPTION
++#define _URC_FATAL_PHASE2_ERROR		__URC_FATAL_PHASE2
++#define _URC_FATAL_PHASE1_ERROR		__URC_FATAL_PHASE1
++#define _URC_NORMAL_STOP		__URC_NORMAL_STOP
++#define _URC_END_OF_STACK		__URC_END_OF_STACK
++#define _URC_HANDLER_FOUND		__URC_HANDLER_FOUND
++#define _URC_INSTALL_CONTEXT		__URC_INSTALL_CONTEXT
++#define _URC_CONTINUE_UNWIND		__URC_CONTINUE_UNWIND
++
++#define _UA_SEARCH_PHASE		__UA_SEARCH_PHASE
++#define _UA_CLEANUP_PHASE		__UA_CLEANUP_PHASE
++#define _UA_HANDLER_FRAME		__UA_HANDLER_FRAME
++#define _UA_FORCE_UNWIND		__UA_FORCE_UNWIND
++#define _UA_END_OF_STACK		__UA_END_OF_STACK
++
++#define _Unwind_RaiseException		__unwind_raise_exception
++#define _Unwind_DeleteException		__unwind_delete_exception
++
++#define _Unwind_Resume			__unwind_resume
++#define _Unwind_Resume_or_Rethrow	__unwind_resume_or_rethrow
++
++#define _Unwind_ForcedUnwind		__unwind_force
++#define _Unwind_GetLanguageSpecificData	__unwind_get_language_specific_data
++
++#define _Unwind_Backtrace		__unwind_backtrace
++#define _Unwind_Calltrace		__unwind_calltrace
++
++#define _Unwind_GetIP			__unwind_get_ip
++#define _Unwind_SetIP			__unwind_set_ip
++
++#define _Unwind_GetGR			__unwind_get_gr
++#define _Unwind_SetGR			__unwind_set_gr
++
++#define _Unwind_GetDataRelBase		__unwind_get_data_rel_base
++#define _Unwind_GetTextRelBase		__unwind_get_text_rel_base
++
++#define _Unwind_GetCFA			__unwind_get_cfa
++#define _Unwind_GetIPInfo		__unwind_get_ip_info
++
++#define _Unwind_GetRegionStart		__unwind_get_region_start
++#define _Unwind_FindEnclosingFunction	__unwind_find_enclosing_function
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _UNWIND_H */
+--- a/libgcc/config.host
++++ b/libgcc/config.host
+@@ -396,6 +396,9 @@
+ i[34567]86-*-cygwin* | x86_64-*-cygwin*)
+   enable_execute_stack=config/i386/enable-execute-stack-mingw32.c
+   ;;
++i[34567]86-*-midipix* | x86_64-*-midipix*)
++  enable_execute_stack=enable-execute-stack-empty.c
++  ;;
+ *)
+   enable_execute_stack=enable-execute-stack-empty.c;
+   ;;
+@@ -956,6 +959,12 @@
+ 		extra_parts="$extra_parts vtv_start.o vtv_end.o vtv_start_preinit.o vtv_end_preinit.o"
+ 	fi
+ 	;;
++i[34567]86-*-midipix*)
++	tmake_file="${tmake_file} i386/t-dw2-eh i386/t-midipix t-softfp i386/32/t-softfp"
++	;;
++x86_64-*-midipix*)
++	tmake_file="${tmake_file} i386/t-dw2-eh i386/t-midipix"
++	;;
+ ia64*-*-elf*)
+ 	extra_parts="$extra_parts crtbeginS.o crtendS.o crtfastmath.o"
+ 	tmake_file="ia64/t-ia64 ia64/t-ia64-elf ia64/t-eh-ia64 t-crtfm t-softfp-tf ia64/t-softfp t-softfp ia64/t-softfp-compat"
+--- a/libstdc++-v3/configure.host
++++ b/libstdc++-v3/configure.host
+@@ -234,6 +234,9 @@
+     os_include_dir="os/newlib"
+     OPT_LDFLAGS="${OPT_LDFLAGS} \$(lt_host_flags)"
+     ;;
++  midipix*)
++    os_include_dir="os/generic"
++    ;;
+   darwin[4-7] | darwin[4-7].*)
+     # For earlier Darwin, performance is improved if libstdc++ is
+     # single-module. Up to at least 10.3.7, -flat_namespace is required
+--- a/libstdc++-v3/crossconfig.m4
++++ b/libstdc++-v3/crossconfig.m4
+@@ -299,6 +299,11 @@
+ dnl # long_double_math_on_this_cpu in configure.ac, right after
+ dnl # the expansion of the present macro.
+     ;;
++  *-midipix*)
++    GLIBCXX_CHECK_LINKER_FEATURES
++    GLIBCXX_CHECK_MATH_SUPPORT
++    GLIBCXX_CHECK_STDLIB_SUPPORT
++    ;;
+   *)
+     AC_MSG_ERROR([No support for this host/target combination.])
+    ;;
+--- a/ltmain.sh
++++ b/ltmain.sh
+@@ -2306,6 +2306,29 @@
+ 	  # Do each command in the postinstall commands.
+ 	  lib="$destdir/$realname"
+ 	  func_execute_cmds "$postinstall_cmds" 'exit $?'
++
++	  # Midipix: generate import library via dlltool.
++	  case $host_os in
++	  midipix*)
++	    if test -n "$realname"; then
++	      implib_ver_def_name="$destdir/${realname}.def"
++	      implib_name="$destdir/${realname%.so*}.lib.a"
++	      dso_name="$realname"
++	      excluded_symbols="__dso_handle,_init,_fini,_so_entry_point,__so_entry_point,__chkstk_ms,___chkstk_ms,dso_main_routine"
++
++	      if test -f "$implib_ver_def_name"; then
++	        ${SED} '/^IMPORTS/,$d' "$implib_ver_def_name" > "${implib_ver_def_name}.tmp"
++	        "$host"-dlltool -d "${implib_ver_def_name}.tmp" \
++	          -D "$dso_name" -l "$implib_name" \
++	          --exclude-symbols "$excluded_symbols" 2>/dev/null
++	        $RM "${implib_ver_def_name}.tmp"
++	        if test -f "$implib_name"; then
++	          cp "$implib_name" "$destdir"
++	        fi
++	      fi
++	    fi
++	    ;;
++	  esac
+ 	fi
+ 
+ 	# Install the pseudo-library for information purposes.
+@@ -8397,6 +8420,10 @@
+ inherited_linker_flags='$new_inherited_linker_flags'
+ 
+ # Libraries that this one depends upon.
++# Midipix: clear dependency_libs to avoid libtool relink issues.
++case $host_os in
++midipix*) dependency_libs= ;;
++esac
+ dependency_libs='$dependency_libs'
+ 
+ # Names of additional weak libraries provided by this library

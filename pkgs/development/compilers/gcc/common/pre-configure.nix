@@ -94,5 +94,8 @@ lib.optionalString (hostPlatform.isSunOS && hostPlatform.is64bit) ''
 ''
 
 + lib.optionalString (
-  (!lib.systems.equals targetPlatform hostPlatform) && withoutTargetLibc && enableShared
+  (!lib.systems.equals targetPlatform hostPlatform)
+  && withoutTargetLibc
+  && enableShared
+  && !targetPlatform.isMidipix
 ) (import ./libgcc-buildstuff.nix { inherit lib stdenv; })

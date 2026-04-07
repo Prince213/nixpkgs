@@ -253,3 +253,7 @@ optionals noSysDirs (
   })
 ]
 ++ optional (targetPlatform.isMusl && targetPlatform.isx86_32) ./libssp-noshared-musl32.patch
+
+++ optionals targetPlatform.isMidipix [
+  ./midipix.patch
+]
