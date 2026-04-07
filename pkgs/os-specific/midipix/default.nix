@@ -14,5 +14,6 @@ makeScopeWithSplicing' {
       callPackage = self.callPackage;
     in
     {
+      musl-midipix = callPackage ./musl-midipix { };
     };
 }

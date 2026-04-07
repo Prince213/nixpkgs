@@ -1,0 +1,11 @@
+--- a/config.project
++++ b/config.project
+@@ -36,7 +36,7 @@
+ 
+ # ccenv
+ mb_ccenv_create_log=
+-mb_ccenv_skip_native=
++mb_ccenv_skip_native=yes
+ 
+ # compilation environment
+ mb_hosted=
