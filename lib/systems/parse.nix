@@ -503,6 +503,10 @@ rec {
     # bottom of https://sourceforge.net/p/mingw-w64/wiki2/Unicode%20apps/
     w64 = { };
 
+    # Midipix
+    nt32 = { };
+    nt64 = { };
+
     none = { };
     unknown = { };
   };
@@ -615,6 +619,10 @@ rec {
         families = { };
       };
       cygwin = {
+        execFormat = pe;
+        families = { };
+      };
+      midipix = {
         execFormat = pe;
         families = { };
       };
@@ -872,6 +880,12 @@ rec {
             cpu = elemAt l 0;
             vendor = elemAt l 1;
             kernel = "cygwin";
+          }
+        else if elemAt l 2 == "midipix" then
+          {
+            cpu = elemAt l 0;
+            vendor = elemAt l 1;
+            kernel = "midipix";
           }
         else
           throw "system string '${lib.concatStringsSep "-" l}' with 3 components is ambiguous";
