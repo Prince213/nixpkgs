@@ -8985,6 +8985,8 @@ with pkgs;
 
   cygwin = recurseIntoAttrs (callPackages ../os-specific/cygwin { });
 
+  midipix = recurseIntoAttrs (callPackages ../os-specific/midipix { });
+
   wpa_supplicant = callPackage ../os-specific/linux/wpa_supplicant { };
 
   wpa_supplicant_gui = libsForQt5.callPackage ../os-specific/linux/wpa_supplicant/gui.nix { };
