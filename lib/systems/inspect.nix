@@ -308,6 +308,7 @@ rec {
       isSunOS
       isCygwin
       isRedox
+      isMidipix
     ];
 
     isMacOS = {
@@ -338,6 +339,9 @@ rec {
     };
     isCygwin = {
       kernel = kernels.cygwin;
+    };
+    isMidipix = {
+      kernel = kernels.midipix;
     };
     isMinGW = {
       kernel = kernels.windows;
