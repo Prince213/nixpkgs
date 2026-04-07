@@ -124,6 +124,8 @@ let
             "msvcrt"
           else if final.isCygwin then
             "cygwin"
+          else if final.isMidipix then
+            "midipix"
           else if final.isWasi then
             "wasilibc"
           else if final.isWasm && !final.isWasi then
@@ -250,6 +252,7 @@ let
             || isFreeBSD
             || isNetBSD # BSDs
             || isCygwin
+            || isMidipix
             || isMinGW
             || isWindows # Windows
             || isWasm # WASM
