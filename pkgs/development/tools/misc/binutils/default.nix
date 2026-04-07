@@ -12,7 +12,9 @@ in
   fetchurl,
   gettext,
   lib,
+  mdso,
   noSysDirs,
+  perk,
   perl,
   runCommand,
   zlib,
@@ -128,6 +130,9 @@ stdenv.mkDerivation (finalAttrs: {
     # Backported against CVE patched in the 2.45 series. See:
     # https://nvd.nist.gov/vuln/detail/CVE-2025-5245
     ./CVE-2025-5245.diff
+  ]
+  ++ lib.optionals stdenv.targetPlatform.isMidipix [
+    ./midipix.patch
   ];
 
   outputs = [
@@ -154,7 +159,7 @@ stdenv.mkDerivation (finalAttrs: {
     bison
     perl
   ]
-  ++ lib.optionals buildPlatform.isDarwin [
+  ++ lib.optionals (buildPlatform.isDarwin || targetPlatform.isMidipix) [
     autoconf269
     automake
     gettext
@@ -164,6 +169,10 @@ stdenv.mkDerivation (finalAttrs: {
   buildInputs = [
     zlib
     gettext
+  ]
+  ++ lib.optionals targetPlatform.isMidipix [
+    perk
+    mdso
   ];
 
   inherit noSysDirs;
@@ -177,6 +186,16 @@ stdenv.mkDerivation (finalAttrs: {
         # autoreconf ''${autoreconfFlags:---install --force --verbose}
         autoconf
         popd
+      done
+    '')
+    + (lib.optionalString targetPlatform.isMidipix ''
+      for i in */configure.ac; do
+        if test "$(dirname "$i")" != "gprofng"; then
+          pushd "$(dirname "$i")"
+          echo "Running autoreconf in $PWD"
+          autoreconf ''${autoreconfFlags:---install --force --verbose}
+          popd
+        fi
       done
     '')
     + ''

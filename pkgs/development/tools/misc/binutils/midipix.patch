@@ -1,0 +1,1157 @@
+--- a/bfd/cofflink.c
++++ b/bfd/cofflink.c
+@@ -443,6 +443,20 @@
+ 		addit = false;
+ 	    }
+ 
++	  if (startswith (name, ".weak.") && strchr (name + 6, '.'))
++	    {
++	      if (! (bfd_coff_link_add_one_symbol
++		     (info, abfd, name, flags, section, value,
++		      (const char *) NULL, copy, false,
++		      (struct bfd_link_hash_entry **) sym_hash)))
++		goto error_return;
++
++	      char *weak_name = strdup (name + 6);
++	      *strchr (weak_name, '.') = '\0';
++	      name = weak_name;
++	      flags |= BSF_WEAK;
++	    }
++
+ 	  if (addit)
+ 	    {
+ 	      if (! (bfd_coff_link_add_one_symbol
+--- a/bfd/config.bfd
++++ b/bfd/config.bfd
+@@ -715,7 +715,7 @@
+     targ_selvecs="i386_elf32_vec iamcu_elf32_vec x86_64_elf32_vec i386_pei_vec x86_64_pe_vec x86_64_pei_vec"
+     want64=true
+     ;;
+-  x86_64-*-mingw* | x86_64-*-pe | x86_64-*-pep | x86_64-*-cygwin)
++  x86_64-*-mingw* | x86_64-*-pe | x86_64-*-pep | x86_64-*-cygwin | x86_64-*-midipix*)
+     targ_defvec=x86_64_pe_vec
+     targ_selvecs="x86_64_pe_vec x86_64_pei_vec x86_64_pe_big_vec x86_64_elf64_vec i386_pe_vec i386_pei_vec i386_elf32_vec iamcu_elf32_vec pdb_vec"
+     want64=true
+@@ -774,7 +774,7 @@
+     targ_defvec=i386_elf32_vec
+     targ_selvecs="iamcu_elf32_vec i386_coff_vec"
+     ;;
+-  i[3-7]86-*-mingw32* | i[3-7]86-*-cygwin* | i[3-7]86-*-winnt | i[3-7]86-*-pe)
++  i[3-7]86-*-mingw32* | i[3-7]86-*-cygwin* | i[3-7]86-*-winnt | i[3-7]86-*-pe | i[3-7]86-*-midipix*)
+     targ_defvec=i386_pe_vec
+     targ_selvecs="i386_pe_vec i386_pe_big_vec i386_pei_vec i386_elf32_vec iamcu_elf32_vec pdb_vec"
+     targ_underscore=yes
+--- a/bfd/linker.c
++++ b/bfd/linker.c
+@@ -989,6 +989,16 @@
+ 	      && startswith (arsym->name, "__imp_"))
+ 	    h = bfd_link_hash_lookup (info->hash, arsym->name + 6,
+ 				      false, false, true);
++	  if (h == NULL
++	      && startswith (arsym->name, ".weak.")
++	      && strchr (arsym->name + 6, '.'))
++	    {
++	      char *weak_name = strdup (arsym->name + 6);
++	      *strchr (weak_name, '.') = '\0';
++	      h = bfd_link_hash_lookup (info->hash, weak_name,
++					false, false, true);
++	      free (weak_name);
++	    }
+ 	  if (h == NULL)
+ 	    continue;
+ 
+--- /dev/null
++++ b/bfd/pe-mdso.h
+@@ -0,0 +1,10 @@
++#ifndef PEMDSO_H
++#define PEMDSO_H
++
++#define PE_DSO_SUFFIX		".so"
++#define PE_DSOLIB_SUFFIX	".dso.a"
++#define PE_IMPLIB_SUFFIX	".lib.a"
++
++const char * pe_mdso_input_name(const char * input_name);
++
++#endif
+--- a/binutils/configure.ac
++++ b/binutils/configure.ac
+@@ -397,7 +397,7 @@
+ 	BUILD_WINDMC='$(WINDMC_PROG)$(EXEEXT)'
+ 	;;
+ changequote(,)dnl
+-    i[3-7]86-*-pe* | i[3-7]86-*-cygwin* | i[3-7]86-*-mingw32** | all)
++    i[3-7]86-*-pe* | i[3-7]86-*-cygwin* | i[3-7]86-*-midipix* | i[3-7]86-*-mingw32** | all)
+ changequote([,])dnl
+ 	BUILD_DLLTOOL='$(DLLTOOL_PROG)$(EXEEXT)'
+ 	if test -z "$DLLTOOL_DEFAULT"; then
+@@ -442,7 +442,7 @@
+ 	BUILD_WINDRES='$(WINDRES_PROG)$(EXEEXT)'
+ 	BUILD_WINDMC='$(WINDMC_PROG)$(EXEEXT)'
+ 	;;
+-    x86_64-*-mingw* | x86_64-*-cygwin*)
++    x86_64-*-mingw* | x86_64-*-midipix* | x86_64-*-cygwin*)
+ 	BUILD_DLLTOOL='$(DLLTOOL_PROG)$(EXEEXT)'
+ 	if test -z "$DLLTOOL_DEFAULT"; then
+ 	    DLLTOOL_DEFAULT="-DDLLTOOL_DEFAULT_MX86_64"
+--- a/config/elf.m4
++++ b/config/elf.m4
+@@ -15,7 +15,7 @@
+ 
+ target_elf=no
+ case $target in
+-  *-darwin* | *-aix* | *-cygwin* | *-mingw* | *-aout* | *-*coff* | \
++  *-darwin* | *-aix* | *-cygwin* | *-mingw* | *-midipix* | *-aout* | *-*coff* | \
+   *-msdosdjgpp* | *-vms* | *-wince* | *-*-pe* | \
+   alpha*-dec-osf* | *-interix* | hppa[[12]]*-*-hpux* | \
+   nvptx-*-none)
+--- a/configure.ac
++++ b/configure.ac
+@@ -985,6 +985,9 @@
+   *-*-mingw*)
+     noconfigdirs="$noconfigdirs target-newlib target-libgloss"
+     ;;
++  *-*-midipix*)
++    noconfigdirs="$noconfigdirs target-newlib target-libgloss"
++    ;;
+   *-*-netbsd*)
+     noconfigdirs="$noconfigdirs target-newlib target-libgloss"
+     ;;
+--- a/gas/config/tc-i386.c
++++ b/gas/config/tc-i386.c
+@@ -16273,7 +16273,7 @@
+ 	value += md_pcrel_from (fixP);
+ #endif
+     }
+-#if defined (OBJ_COFF) && defined (TE_PE)
++#if defined (OBJ_COFF) && defined (TE_PE) && !defined (TE_MIDIPIX)
+   if (fixP->fx_addsy != NULL
+       && S_IS_WEAK (fixP->fx_addsy)
+       /* PR 16858: Do not modify weak function references.  */
+@@ -16377,7 +16377,12 @@
+       fixP->fx_done = 0;
+       /* Remember value for tc_gen_reloc.  */
+       fixP->fx_addnumber = value;
+-      /* Clear out the frag for now.  */
++#if defined (TE_MIDIPIX)
++      /* For data symbols, cancel the effect of the relocation.  */
++      if (!((S_GET_SEGMENT (fixP->fx_addsy)->flags) & SEC_CODE))
++	value = -S_GET_VALUE (fixP->fx_addsy);
++      else
++#endif
+       value = 0;
+     }
+ #endif
+--- /dev/null
++++ b/gas/config/te-midipix.h
+@@ -0,0 +1,26 @@
++/* Copyright (C) 2025 Free Software Foundation, Inc.
++
++   This file is part of GAS, the GNU Assembler.
++
++   GAS is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as
++   published by the Free Software Foundation; either version 3,
++   or (at your option) any later version.
++
++   GAS is distributed in the hope that it will be useful, but
++   WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
++   the GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with GAS; see the file COPYING.  If not, write to the Free
++   Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA
++   02110-1301, USA.  */
++
++#define TE_PE
++#define TE_MIDIPIX
++#define LEX_AT (LEX_BEGIN_NAME | LEX_NAME)
++
++#define COFF_LONG_SECTION_NAMES
++
++#include "obj-format.h"
+--- a/gas/configure.ac
++++ b/gas/configure.ac
+@@ -791,7 +791,7 @@
+ 
+ # PE code has way too many macros tweaking behaviour
+ case ${te_file} in
+-  pe*) emulations="" ;;
++  pe* | midipix) emulations="" ;;
+ esac
+ 
+ # Assign floating point type.  Most processors with FP support
+--- a/gas/configure.tgt
++++ b/gas/configure.tgt
+@@ -263,6 +263,11 @@
+       x86_64*)				fmt=coff em=pep ;;
+       i*)				fmt=coff em=pe ;;
+     esac ;;
++  i386-*-midipix*)
++    case ${cpu} in
++      x86_64*)				fmt=coff em=midipix ;;
++      i*)				fmt=coff em=midipix ;;
++    esac ;;
+   i386-*-nto-qnx*)			fmt=elf ;;
+   i386-*-*nt*)				fmt=coff em=pe ;;
+   i386-*-rdos*)				fmt=elf ;;
+--- a/ld/Makefile.am
++++ b/ld/Makefile.am
+@@ -628,7 +628,7 @@
+ else
+   GENDEPDIR=
+ endif
+-GENSCRIPTS = $(SHELL) $(srcdir)/genscripts.sh "${srcdir}" "${libdir}" "${prefix}" "${exec_prefix}" @host@ @target@ @target_alias@ "$(GENDEPDIR)" "${LIB_PATH}" "@EMULATION_LIBPATH@" "@NATIVE_LIB_DIRS@" @use_sysroot@ @enable_initfini_array@
++GENSCRIPTS = EXECUTABLE_NAME='@PE_EXECUTABLE_NAME@' PE_FRAMEWORK_LIBS='@PE_FRAMEWORK_LIBS@' PE_CRT_SECTION='@PE_CRT_SECTION@' PE_CYGWIN_FORK_SUPPORT='@PE_CYGWIN_FORK_SUPPORT@' $(SHELL) $(srcdir)/genscripts.sh "${srcdir}" "${libdir}" "${prefix}" "${exec_prefix}" @host@ @target@ @target_alias@ "$(GENDEPDIR)" "${LIB_PATH}" "@EMULATION_LIBPATH@" "@NATIVE_LIB_DIRS@" @use_sysroot@ @enable_initfini_array@
+ GEN_DEPENDS = $(srcdir)/genscripts.sh ldscripts/stamp
+ 
+ @TDIRS@
+@@ -658,7 +658,8 @@
+ ld_new_DEPENDENCIES = $(EMULATION_OFILES) $(EMUL_EXTRA_OFILES) \
+ 		      $(BFDLIB) $(LIBCTF) $(LIBIBERTY) $(LIBINTL_DEP)
+ ld_new_LDADD = $(EMULATION_OFILES) $(EMUL_EXTRA_OFILES) $(BFDLIB) $(LIBCTF) \
+-	       $(LIBIBERTY) $(LIBINTL) $(ZLIB) $(ZSTD_LIBS) $(JANSSON_LIBS)
++	       $(LIBIBERTY) $(LIBINTL) $(ZLIB) $(ZSTD_LIBS) $(JANSSON_LIBS) \
++	       @PE_FRAMEWORK_LIBS@
+ 
+ # Dependency tracking for the generated emulation files.
+ EXTRA_ld_new_SOURCES += $(ALL_EMULATION_SOURCES) $(ALL_64_EMULATION_SOURCES)
+--- a/ld/configure.ac
++++ b/ld/configure.ac
+@@ -404,6 +404,16 @@
+ 
+ AC_SUBST(HDEFINES)
+ AC_SUBST(NATIVE_LIB_DIRS)
++AC_SUBST(PE_FRAMEWORK_LIBS)
++AC_SUBST(PE_EXECUTABLE_NAME)
++AC_SUBST(PE_CRT_SECTION)
++AC_SUBST(PE_CYGWIN_FORK_SUPPORT)
++
++case $target_os in
++  *midipix*)
++    AC_DEFINE(HAVE_PEIMPLIB_H, 1, [Define if targeting midipix.])
++    ;;
++esac
+ 
+ # We use headers from include/ that check various HAVE_*_H macros, thus
+ # should ensure they are set by configure.  This is true even when C99
+@@ -762,6 +772,29 @@
+ AC_SUBST(pdfdir)
+ 
+ AC_CONFIG_FILES(Makefile po/Makefile.in:po/Make-in)
++
++AC_CONFIG_COMMANDS([peimplib.h],
++[case $target_os in
++  *midipix*)
++    cat > peimplib.h << 'PEEOF'
++/* PE target-specific bits, generated by ld/configure.  */
++#ifndef PE_TARGET_MIDIPIX
++#define PE_TARGET_MIDIPIX
++#endif
++
++#ifndef PE_TARGET_MDSO
++#define PE_TARGET_MDSO 1
++#endif
++
++#include "pe-mdso.h"
++PEEOF
++    ;;
++  *)
++    rm -f peimplib.h
++    ;;
++esac],
++[target_os=$target_os])
++
+ AC_OUTPUT
+ 
+ GNU_MAKE_JOBSERVER
+--- a/ld/configure.tgt
++++ b/ld/configure.tgt
+@@ -436,6 +436,12 @@
+ i[3-7]86-*-mingw32*)	targ_emul=i386pe ;
+ 			targ_extra_ofiles="deffilep.o pdb.o pe-dll.o"
+ 			;;
++i[3-7]86-*-midipix*)	targ_emul=i386pe ;
++			targ_extra_ofiles="deffilep.o pdb.o pe-dll.o pe-mdso.o" ;
++			PE_FRAMEWORK_LIBS="-lperk -lmdso" ;
++			PE_EXECUTABLE_NAME=a.out ;
++			PE_CRT_SECTION=no ;
++			PE_CYGWIN_FORK_SUPPORT=no ;;
+ i[3-7]86-*-interix*)	targ_emul=i386pe_posix;
+ 			targ_extra_ofiles="deffilep.o pe-dll.o"
+ 			;;
+@@ -1065,6 +1071,13 @@
+ 			targ_extra_emuls=i386pe
+ 			targ_extra_ofiles="deffilep.o pdb.o pep-dll.o pe-dll.o"
+ 			;;
++x86_64-*-midipix*)	targ_emul=i386pep ;
++			targ_extra_emuls=i386pe ;
++			targ_extra_ofiles="deffilep.o pdb.o pep-dll.o pe-dll.o pe-mdso.o" ;
++			PE_FRAMEWORK_LIBS="-lperk -lmdso" ;
++			PE_EXECUTABLE_NAME=a.out ;
++			PE_CRT_SECTION=no ;
++			PE_CYGWIN_FORK_SUPPORT=no ;;
+ x86_64-*-gnu*)		targ_emul=elf_x86_64
+ 			targ_extra_emuls="elf32_x86_64 elf_iamcu elf_i386"
+ 			targ_extra_libpath="elf_i386 elf32_x86_64"
+@@ -1148,6 +1161,10 @@
+ *-*-linux*)
+   ;;
+ 
++*-*-midipix*)
++  NATIVE_LIB_DIRS=
++  ;;
++
+ *-*-netbsd*)
+   ;;
+ 
+--- a/ld/emultempl/pe.em
++++ b/ld/emultempl/pe.em
+@@ -69,8 +69,8 @@
+ EOF
+ 
+ case ${target} in
+-  x86_64-*-mingw* | x86_64-*-pe | x86_64-*-pep | x86_64-*-cygwin | \
+-  i[3-7]86-*-mingw32* | i[3-7]86-*-cygwin* | i[3-7]86-*-winnt | i[3-7]86-*-pe)
++  x86_64-*-mingw* | x86_64-*-pe | x86_64-*-pep | x86_64-*-cygwin | x86_64-*-midipix* | \
++  i[3-7]86-*-mingw32* | i[3-7]86-*-cygwin* | i[3-7]86-*-winnt | i[3-7]86-*-pe | i[3-7]86-*-midipix*)
+ fragment <<EOF
+ #include "pdb.h"
+ EOF
+@@ -79,6 +79,14 @@
+ 
+ fragment <<EOF
+ 
++#ifndef PE_IMPLIB_SUFFIX
++#define PE_IMPLIB_SUFFIX	".dll.a"
++#endif
++
++#ifndef PE_DSO_SUFFIX
++#define PE_DSO_SUFFIX		".dll"
++#endif
++
+ /* FIXME: See bfd/peXXigen.c for why we include an architecture specific
+    header in generic PE code.  */
+ #include "coff/i386.h"
+@@ -170,6 +178,10 @@
+ #ifdef DLL_SUPPORT
+ static int pe_enable_stdcall_fixup = -1; /* 0=disable 1=enable.  */
+ static char *pe_out_def_filename = NULL;
++#ifdef PE_TARGET_MDSO
++static char *pe_dsolib_filename = NULL;
++static char *pe_dsolib_loader_path = NULL;
++#endif
+ static int pe_enable_auto_image_base = 0;
+ static unsigned long pe_auto_image_base = 0x61500000;
+ static char *pe_dll_search_prefix = NULL;
+@@ -283,6 +295,10 @@
+     {"add-stdcall-alias", no_argument, NULL, OPTION_STDCALL_ALIASES},
+     {"enable-stdcall-fixup", no_argument, NULL, OPTION_ENABLE_STDCALL_FIXUP},
+     {"disable-stdcall-fixup", no_argument, NULL, OPTION_DISABLE_STDCALL_FIXUP},
++#ifdef PE_TARGET_MDSO
++    {"out-dsolib", required_argument, NULL, OPTION_DSOLIB_FILENAME},
++    {"dsolib-loader-path", required_argument, NULL, OPTION_DSOLIB_LOADER_PATH},
++#endif
+     {"warn-duplicate-exports", no_argument, NULL, OPTION_WARN_DUPLICATE_EXPORTS},
+     /* getopt() allows abbreviations, so we do this to stop it from
+        treating -c as an abbreviation for these --compat-implib.  */
+@@ -797,6 +813,14 @@
+     case OPTION_DISABLE_STDCALL_FIXUP:
+       pe_enable_stdcall_fixup = 0;
+       break;
++#ifdef PE_TARGET_MDSO
++    case OPTION_DSOLIB_FILENAME:
++      pe_dsolib_filename = xstrdup (optarg);
++      break;
++    case OPTION_DSOLIB_LOADER_PATH:
++      pe_dsolib_loader_path = xstrdup (optarg);
++      break;
++#endif
+     case OPTION_WARN_DUPLICATE_EXPORTS:
+       pe_dll_warn_dup_exports = 1;
+       break;
+@@ -2092,6 +2116,11 @@
+               || bfd_link_pic (&link_info)))
+ 	pe_dll_generate_implib (pe_def_file, command_line.out_implib_filename,
+ 				&link_info);
++#ifdef PE_TARGET_MDSO
++      if (pe_dsolib_filename)
++	pe_dll_generate_dsolib (pe_def_file, 0, pe_dsolib_filename,
++				pe_dsolib_loader_path, 32);
++#endif
+     }
+ #if defined(TARGET_IS_shpe)
+   /* ARM doesn't need relocs.  */
+@@ -2348,10 +2377,18 @@
+     }
+   libname_fmt [] =
+     {
++#ifdef PE_TARGET_MDSO
++      /* Prefer ldso-specific import libraries.  */
++      { "lib%s" PE_DSOLIB_SUFFIX, false },
++#endif
+       /* Preferred explicit import library for dll's.  */
+-      { "lib%s.dll.a", false },
++      { "lib%s" PE_IMPLIB_SUFFIX, false },
+       /* Alternate explicit import library for dll's.  */
+-      { "%s.dll.a", false },
++      { "%s" PE_IMPLIB_SUFFIX, false },
++#ifdef PE_TARGET_MDSO
++      /* libfoo.so precedes libfoo.a for mdso targets.  */
++      { "lib%s" PE_DSO_SUFFIX, false },
++#endif
+       /* "libfoo.a" could be either an import lib or a static lib.
+ 	 For backwards compatibility, libfoo.a needs to precede
+ 	 libfoo.dll and foo.dll in the search.  */
+@@ -2360,6 +2397,7 @@
+       { "%s.lib", false },
+       /* PR 22948 - Check for an import library.  */
+       { "lib%s.lib", false },
++#ifndef PE_TARGET_MDSO
+ #ifdef DLL_SUPPORT
+       /* Try "<prefix>foo.dll" (preferred dll name, if specified).  */
+       {	"%s%s.dll", true },
+@@ -2368,6 +2406,7 @@
+       {	"lib%s.dll", false },
+       /* Finally try 'native' dll name "foo.dll".  */
+       {  "%s.dll", false },
++#endif
+       /* Note: If adding more formats to this table, make sure to check to
+ 	 see if their length is longer than libname_fmt[0].format, and if
+ 	 so, update the call to xmalloc() below.  */
+--- a/ld/emultempl/pep.em
++++ b/ld/emultempl/pep.em
+@@ -78,8 +78,8 @@
+ EOF
+ 
+ case ${target} in
+-  x86_64-*-mingw* | x86_64-*-pe | x86_64-*-pep | x86_64-*-cygwin | \
+-  i[3-7]86-*-mingw32* | i[3-7]86-*-cygwin* | i[3-7]86-*-winnt | i[3-7]86-*-pe | \
++  x86_64-*-mingw* | x86_64-*-pe | x86_64-*-pep | x86_64-*-cygwin | x86_64-*-midipix* | \
++  i[3-7]86-*-mingw32* | i[3-7]86-*-cygwin* | i[3-7]86-*-winnt | i[3-7]86-*-pe | i[3-7]86-*-midipix* | \
+   aarch64-*-mingw* | aarch64-*-pe* )
+ fragment <<EOF
+ #include "pdb.h"
+@@ -89,6 +89,14 @@
+ 
+ fragment <<EOF
+ 
++#ifndef PE_IMPLIB_SUFFIX
++#define PE_IMPLIB_SUFFIX	".dll.a"
++#endif
++
++#ifndef PE_DSO_SUFFIX
++#define PE_DSO_SUFFIX		".dll"
++#endif
++
+ /* FIXME: See bfd/peXXigen.c for why we include an architecture specific
+    header in generic PE code.  */
+ #ifdef TARGET_IS_i386pep
+@@ -191,6 +199,10 @@
+ #ifdef DLL_SUPPORT
+ static int    pep_enable_stdcall_fixup = 1; /* 0=disable 1=enable (default).  */
+ static char * pep_out_def_filename = NULL;
++#ifdef PE_TARGET_MDSO
++static char * pep_dsolib_filename = NULL;
++static char * pep_dsolib_loader_path = NULL;
++#endif
+ static int    pep_enable_auto_image_base = 0;
+ static char * pep_dll_search_prefix = NULL;
+ #endif
+@@ -290,6 +302,10 @@
+     {"add-stdcall-alias", no_argument, NULL, OPTION_STDCALL_ALIASES},
+     {"enable-stdcall-fixup", no_argument, NULL, OPTION_ENABLE_STDCALL_FIXUP},
+     {"disable-stdcall-fixup", no_argument, NULL, OPTION_DISABLE_STDCALL_FIXUP},
++#ifdef PE_TARGET_MDSO
++    {"out-dsolib", required_argument, NULL, OPTION_DSOLIB_FILENAME},
++    {"dsolib-loader-path", required_argument, NULL, OPTION_DSOLIB_LOADER_PATH},
++#endif
+     {"warn-duplicate-exports", no_argument, NULL, OPTION_WARN_DUPLICATE_EXPORTS},
+     /* getopt() allows abbreviations, so we do this to stop it from
+        treating -c as an abbreviation for these --compat-implib.  */
+@@ -772,6 +788,14 @@
+     case OPTION_DISABLE_STDCALL_FIXUP:
+       pep_enable_stdcall_fixup = 0;
+       break;
++#ifdef PE_TARGET_MDSO
++    case OPTION_DSOLIB_FILENAME:
++      pep_dsolib_filename = xstrdup (optarg);
++      break;
++    case OPTION_DSOLIB_LOADER_PATH:
++      pep_dsolib_loader_path = xstrdup (optarg);
++      break;
++#endif
+     case OPTION_WARN_DUPLICATE_EXPORTS:
+       pep_dll_warn_dup_exports = 1;
+       break;
+@@ -1935,6 +1959,11 @@
+               || bfd_link_pic (&link_info)))
+ 	pep_dll_generate_implib (pep_def_file,
+ 				 command_line.out_implib_filename, &link_info);
++#ifdef PE_TARGET_MDSO
++      if (pep_dsolib_filename)
++	pep_dll_generate_dsolib (pep_def_file, 0, pep_dsolib_filename,
++				 pep_dsolib_loader_path, 64);
++#endif
+     }
+ 
+   if (pep_out_def_filename)
+@@ -2184,10 +2213,18 @@
+     }
+   libname_fmt [] =
+     {
++#ifdef PE_TARGET_MDSO
++      /* Prefer ldso-specific import libraries.  */
++      { "lib%s" PE_DSOLIB_SUFFIX, false },
++#endif
+       /* Preferred explicit import library for dll's.  */
+-      { "lib%s.dll.a", false },
++      { "lib%s" PE_IMPLIB_SUFFIX, false },
+       /* Alternate explicit import library for dll's.  */
+-      { "%s.dll.a", false },
++      { "%s" PE_IMPLIB_SUFFIX, false },
++#ifdef PE_TARGET_MDSO
++      /* libfoo.so precedes libfoo.a for mdso targets.  */
++      { "lib%s" PE_DSO_SUFFIX, false },
++#endif
+       /* "libfoo.a" could be either an import lib or a static lib.
+ 	 For backwards compatibility, libfoo.a needs to precede
+ 	 libfoo.dll and foo.dll in the search.  */
+@@ -2196,6 +2233,7 @@
+       { "%s.lib", false },
+       /* PR 22948 - Check for an import library.  */
+       { "lib%s.lib", false },
++#ifndef PE_TARGET_MDSO
+ #ifdef DLL_SUPPORT
+       /* Try "<prefix>foo.dll" (preferred dll name, if specified).  */
+       {	"%s%s.dll", true },
+@@ -2204,6 +2242,7 @@
+       {	"lib%s.dll", false },
+       /* Finally try 'native' dll name "foo.dll".  */
+       {  "%s.dll", false },
++#endif
+       /* Note: If adding more formats to this table, make sure to check to
+ 	 see if their length is longer than libname_fmt[0].format, and if
+ 	 so, update the call to xmalloc() below.  */
+--- a/ld/ldlex.h
++++ b/ld/ldlex.h
+@@ -380,6 +380,9 @@
+   OPTION_PDB,
+   OPTION_ENABLE_RELOC_SECTION,
+   OPTION_DISABLE_RELOC_SECTION,
++  /* Used by emultempl/pe.em and emultempl/pep.em for midipix.  */
++  OPTION_DSOLIB_FILENAME,
++  OPTION_DSOLIB_LOADER_PATH,
+   /* DLL Characteristics flags.  */
+   OPTION_DISABLE_DYNAMIC_BASE,
+   OPTION_DISABLE_FORCE_INTEGRITY,
+--- a/ld/pe-dll.c
++++ b/ld/pe-dll.c
+@@ -29,6 +29,10 @@
+ 
+ #include <time.h>
+ 
++#ifdef PE_TARGET_MDSO
++#include <sys/wait.h>
++#endif
++
+ #include "ld.h"
+ #include "ldexp.h"
+ #include "ldlang.h"
+@@ -2900,6 +2904,178 @@
+ 	   s->owner, s, rel->address, (*rel->sym_ptr_ptr)->name);
+ }
+ 
++#ifdef PE_TARGET_MDSO
++void
++pe_dll_generate_dsolib (def_file *def,
++			const char **expsyms,
++			const char *dsolib_file_name,
++			const char *loader_path,
++			unsigned char bits)
++{
++  char *mdso_exe_path;
++  char *slash;
++  char *mark;
++  FILE *fout;
++  char *argv[10];
++  int fd[2];
++  int pid;
++  int rpid;
++  int ecode;
++  int i;
++
++  if ((bits != 32) && (bits != 64))
++    {
++      fprintf (stderr, "%s: internal error (bits == %d).\n",
++	       program_name, bits);
++      xexit (EXIT_FAILURE);
++    }
++
++  mdso_exe_path = calloc (1, strlen (program_name) + strlen ("mdso") + 1);
++  if (!mdso_exe_path)
++    {
++      fprintf (stderr, "%s: cannot allocate mdso_exe_path buffer.\n",
++	       program_name);
++      xexit (EXIT_FAILURE);
++    }
++
++  strcpy (mdso_exe_path, program_name);
++
++  slash = strrchr (mdso_exe_path, '/');
++  if (slash)
++    slash++;
++  else
++    slash = mdso_exe_path;
++
++  mark = strrchr (slash, '-');
++  if (mark)
++    mark++;
++  else
++    mark = slash;
++
++  sprintf (mark, "%s", "mdso");
++
++  if (pipe (fd))
++    {
++      fprintf (stderr, "%s: cannot create a pipe.\n", program_name);
++      xexit (EXIT_FAILURE);
++    }
++
++  fout = fdopen (fd[1], "a");
++  if (!fout)
++    {
++      fprintf (stderr, "%s: pipe fdopen failed.\n", program_name);
++      xexit (EXIT_FAILURE);
++    }
++
++  pid = fork ();
++  if (pid < 0)
++    {
++      fprintf (stderr, "%s: fork failed.\n", program_name);
++      xexit (EXIT_FAILURE);
++    }
++
++  if (pid == 0)
++    {
++      argv[0] = mdso_exe_path;
++      argv[1] = (bits == 64) ? "-m64" : "-m32";
++      argv[2] = "--implib";
++      argv[3] = (char *) dsolib_file_name;
++      argv[4] = "--libname";
++      argv[5] = (def->name) ? def->name : (char *) dll_symname;
++
++      if (loader_path)
++	{
++	  argv[6] = "--libpath";
++	  argv[7] = (char *) loader_path;
++	  argv[8] = "-";
++	  argv[9] = 0;
++	}
++      else
++	{
++	  argv[6] = "-";
++	  argv[7] = 0;
++	}
++
++      fclose (fout);
++      close (fd[1]);
++      close (0);
++
++      if (dup (fd[0]) == 0)
++	execvp (mdso_exe_path, argv);
++
++      exit (EXIT_FAILURE);
++    }
++
++  free (mdso_exe_path);
++
++  if (expsyms)
++    {
++      for (; *expsyms;)
++	{
++	  if (fprintf (fout, "%s\n", *expsyms++) < 0)
++	    {
++	      fprintf (stderr, "%s: pipe write operation failed.\n",
++		       program_name);
++	      xexit (EXIT_FAILURE);
++	    }
++	}
++    }
++  else
++    {
++      for (i = 0; i < def->num_exports; i++)
++	{
++	  if (!(pe_def_file->exports[i].flag_private))
++	    {
++	      if (fprintf (fout, "%s\n", def->exports[i].name) < 0)
++		{
++		  fprintf (stderr, "%s: pipe write operation failed.\n",
++			   program_name);
++		  xexit (EXIT_FAILURE);
++		}
++	    }
++	}
++    }
++
++  if (fflush (fout) < 0)
++    {
++      fprintf (stderr, "%s: pipe fflush operation failed.\n", program_name);
++      xexit (EXIT_FAILURE);
++    }
++
++  fclose (fout);
++  close (fd[0]);
++
++  rpid = waitpid (pid, &ecode, 0);
++  if (rpid < 0)
++    {
++      fprintf (stderr, "%s: waitpid operation failed.\n", program_name);
++      xexit (EXIT_FAILURE);
++    }
++
++  if (rpid != pid)
++    {
++      fprintf (stderr, "%s: waitpid returned an unexpected pid.\n",
++	       program_name);
++      xexit (EXIT_FAILURE);
++    }
++
++  if (!(WIFEXITED (ecode)))
++    {
++      fprintf (stderr,
++	       "%s: waitpid reported abnormal child process termination.\n",
++	       program_name);
++      xexit (EXIT_FAILURE);
++    }
++
++  if (WEXITSTATUS (ecode))
++    {
++      fprintf (stderr, "%s: the child process returned an error.\n",
++	       program_name);
++      xexit (EXIT_FAILURE);
++    }
++}
++#endif /* PE_TARGET_MDSO */
++
+ void
+ pe_dll_generate_implib (def_file *def, const char *impfilename, struct bfd_link_info *info)
+ {
+--- a/ld/pe-dll.h
++++ b/ld/pe-dll.h
+@@ -50,6 +50,8 @@
+   (const char *);
+ extern void pe_dll_generate_implib
+   (def_file *, const char *, struct bfd_link_info *);
++extern void pe_dll_generate_dsolib
++  (def_file *, const char **, const char *, const char *, unsigned char);
+ extern void pe_process_import_defs
+   (bfd *, struct bfd_link_info *);
+ extern bool pe_implied_import_dll
+--- /dev/null
++++ b/ld/pe-mdso.c
+@@ -0,0 +1,249 @@
++#include "sysdep.h"
++#include "pe-mdso.h"
++
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <errno.h>
++#include <sys/stat.h>
++
++#include <perk/perk.h>
++#include <mdso/mdso.h>
++
++extern char * program_name;
++extern int    xatexit (void (*)(void));
++
++static char   pe_mdso_tmp_lib_name[] = "/tmp/mdso_XXXXXXXXXXXX";
++static char   pe_perk_tmp_def_name[] = "/tmp/perk_XXXXXXXXXXXX";
++static struct pe_driver_ctx * pe_dctx;
++
++struct pe_mdso_lib
++{
++  dev_t  st_dev;
++  ino_t  st_ino;
++  char   ar_name[24];
++};
++
++struct pe_mdso_lib * pe_mdso_lib_arr;
++struct pe_mdso_lib * pe_mdso_lib_ptr;
++struct pe_mdso_lib * pe_mdso_lib_cap;
++
++static int
++pe_mdso_perk_init (void)
++{
++  char * argv[2];
++
++  if (pe_dctx)
++    return 0;
++
++  argv[0] = program_name;
++  argv[1] = 0;
++
++  return pe_lib_get_driver_ctx (argv, 0, 0, 0, &pe_dctx);
++}
++
++static void
++pe_mdso_cache_unlink (void)
++{
++  struct pe_mdso_lib * pe_mdso;
++
++  for (pe_mdso = pe_mdso_lib_arr; pe_mdso < pe_mdso_lib_ptr; pe_mdso++)
++    unlink (pe_mdso->ar_name);
++}
++
++static int
++pe_mdso_cache_alloc (void)
++{
++  void *  prev;
++  size_t  size;
++  size_t  nlib;
++
++  if (pe_mdso_lib_cap > pe_mdso_lib_ptr)
++    return 0;
++
++  prev = pe_mdso_lib_arr;
++  nlib = pe_mdso_lib_cap - pe_mdso_lib_arr;
++  size = nlib * sizeof (struct pe_mdso_lib);
++
++  pe_mdso_lib_arr = calloc (nlib + 2, sizeof (struct pe_mdso_lib));
++  if (!pe_mdso_lib_arr)
++    return -1;
++
++  if (!prev)
++    xatexit (pe_mdso_cache_unlink);
++
++  memcpy (pe_mdso_lib_arr, prev, size);
++
++  pe_mdso_lib_ptr = &pe_mdso_lib_arr[nlib];
++  pe_mdso_lib_cap = &pe_mdso_lib_arr[nlib + 2];
++
++  return 0;
++}
++
++const char *
++pe_mdso_input_name (const char * input_name)
++{
++  int    fdin;
++  int    fdout;
++  char * libname;
++  char * argv[8];
++
++  struct stat              st;
++  struct pe_mdso_lib *     pe_mdso;
++  struct pe_unit_ctx *     pe_uctx;
++  struct pe_fd_ctx         pe_fdctx;
++  struct mdso_driver_ctx * mdso_dctx;
++
++  if (pe_mdso_perk_init () < 0)
++    return 0;
++
++  if ((fdin = open (input_name, O_RDONLY)) < 0)
++    return input_name;
++
++  if (fstat (fdin, &st) < 0)
++    {
++      close (fdin);
++      return 0;
++    }
++
++  for (pe_mdso = pe_mdso_lib_arr; pe_mdso < pe_mdso_lib_ptr; pe_mdso++)
++    {
++      if ((pe_mdso->st_dev == st.st_dev) && (pe_mdso->st_ino == st.st_ino))
++	{
++	  close (fdin);
++	  return pe_mdso->ar_name;
++	}
++    }
++
++  if (pe_lib_get_unit_ctx (pe_dctx, input_name, &pe_uctx) < 0)
++    {
++      close (fdin);
++      return input_name;
++    }
++
++  if (pe_uctx->x_armeta)
++    {
++      close (fdin);
++      pe_lib_free_unit_ctx (pe_uctx);
++      return input_name;
++    }
++
++  switch (pe_uctx->x_meta->m_subtype)
++    {
++    case PE_SUBTYPE_DLL:
++    case PE_SUBTYPE_EXE:
++      break;
++
++    default:
++      close (fdin);
++      pe_lib_free_unit_ctx (pe_uctx);
++      return input_name;
++    }
++
++  switch (pe_uctx->x_meta->m_abi)
++    {
++    case PE_ABI_PE32:
++      argv[1] = "-m32";
++      break;
++
++    case PE_ABI_PE64:
++      argv[1] = "-m64";
++      break;
++
++    default:
++      close (fdin);
++      pe_lib_free_unit_ctx (pe_uctx);
++      return 0;
++    }
++
++  if (pe_lib_get_driver_fdctx (pe_dctx, &pe_fdctx) < 0)
++    {
++      close (fdin);
++      pe_lib_free_unit_ctx (pe_uctx);
++      pe_output_error_vector (pe_dctx);
++      return 0;
++    }
++
++  memset (&pe_perk_tmp_def_name[10], 'X', 12);
++  memset (&pe_mdso_tmp_lib_name[10], 'X', 12);
++
++  pe_fdctx.fdout = mkstemp (pe_perk_tmp_def_name);
++  if (pe_fdctx.fdout < 0)
++    {
++      close (fdin);
++      pe_lib_free_unit_ctx (pe_uctx);
++      return 0;
++    }
++
++  if (pe_lib_set_driver_fdctx (pe_dctx, &pe_fdctx) < 0)
++    {
++      close (fdin);
++      pe_lib_free_unit_ctx (pe_uctx);
++      return 0;
++    }
++
++  if (pe_output_export_symbols (pe_uctx->x_meta) < 0)
++    {
++      close (fdin);
++      pe_lib_free_unit_ctx (pe_uctx);
++      pe_output_error_vector (pe_dctx);
++      return 0;
++    }
++
++  close (fdin);
++  pe_lib_free_unit_ctx (pe_uctx);
++
++  libname = strrchr (input_name, '/');
++  if (libname)
++    libname++;
++  else
++    {
++      libname = strrchr (input_name, '\\');
++      if (libname)
++	libname++;
++      else
++	libname = (char *) input_name;
++    }
++
++  if (pe_mdso_cache_alloc () < 0)
++    return 0;
++
++  fdout = mkstemp (pe_mdso_tmp_lib_name);
++  if (fdout < 0)
++    return 0;
++
++  argv[0] = program_name;
++  argv[2] = "--libname";
++  argv[3] = libname;
++  argv[4] = "--implib";
++  argv[5] = pe_mdso_tmp_lib_name;
++  argv[6] = pe_perk_tmp_def_name;
++  argv[7] = 0;
++
++  if (mdso_lib_get_driver_ctx (argv, 0, 0, 0, &mdso_dctx) < 0)
++    {
++      close (fdout);
++      return 0;
++    }
++
++  if (mdso_gen_implib_archive (mdso_dctx) < 0)
++    {
++      close (fdout);
++      mdso_output_error_vector (mdso_dctx);
++      mdso_lib_free_driver_ctx (mdso_dctx);
++      return 0;
++    }
++
++  strcpy (pe_mdso_lib_ptr->ar_name, pe_mdso_tmp_lib_name);
++
++  pe_mdso_lib_ptr->st_dev = st.st_dev;
++  pe_mdso_lib_ptr->st_ino = st.st_ino;
++  pe_mdso_lib_ptr++;
++
++  unlink (pe_perk_tmp_def_name);
++  mdso_lib_free_driver_ctx (mdso_dctx);
++  close (fdout);
++
++  return pe_mdso_tmp_lib_name;
++}
+--- a/ld/pep-dll.c
++++ b/ld/pep-dll.c
+@@ -52,6 +52,7 @@
+ #define pe_dll_fill_sections        pep_dll_fill_sections
+ #define pe_exe_fill_sections        pep_exe_fill_sections
+ #define pe_dll_generate_implib      pep_dll_generate_implib
++#define pe_dll_generate_dsolib      pep_dll_generate_dsolib
+ #define pe_dll_add_excludes         pep_dll_add_excludes
+ #define pe_bfd_is_dll		    pep_bfd_is_dll
+ #define pe_output_file_set_long_section_names \
+--- a/ld/pep-dll.h
++++ b/ld/pep-dll.h
+@@ -47,6 +47,7 @@
+ extern void pep_dll_add_excludes  (const char *, const exclude_type);
+ extern void pep_dll_generate_def_file  (const char *);
+ extern void pep_dll_generate_implib  (def_file *, const char *, struct bfd_link_info *);
++extern void pep_dll_generate_dsolib  (def_file *, const char **, const char *, const char *, unsigned char);
+ extern void pep_process_import_defs  (bfd *, struct bfd_link_info *);
+ extern bool pep_implied_import_dll  (const char *);
+ extern void pep_dll_build_sections  (bfd *, struct bfd_link_info *);
+--- a/ld/scripttempl/pe.sc
++++ b/ld/scripttempl/pe.sc
+@@ -107,12 +107,17 @@
+     ${RELOCATING+ KEEP (*(.gcc_except_table))}
+   }
+ 
++EOF
++if [ x"$PE_CYGWIN_FORK_SUPPORT" != xno ]; then cat << EOF
+   /* The Cygwin32 library uses a section to avoid copying certain data
+-     on fork.  This used to be named ".data$nocopy".  The linker used
++     on fork.  This used to be named ".data\$nocopy".  The linker used
+      to include this between __data_start__ and __data_end__, but that
+      breaks building the cygwin32 dll.  Instead, we name the section
+      ".data_cygwin_nocopy" and explicitly include it after __data_end__. */
+ 
++EOF
++fi
++cat << EOF
+   .data ${RELOCATING+BLOCK(__section_alignment__)} :
+   {
+     ${RELOCATING+__data_start__ = . ;}
+@@ -121,7 +126,12 @@
+     ${R_DATA}
+     KEEP(*(.jcr))
+     ${RELOCATING+__data_end__ = . ;}
++EOF
++if [ x"$PE_CYGWIN_FORK_SUPPORT" != xno ]; then cat << EOF
+     ${RELOCATING+*(.data_cygwin_nocopy)}
++EOF
++fi
++cat << EOF
+   }
+ 
+   .rdata ${RELOCATING+BLOCK(__section_alignment__)} :
+@@ -173,6 +183,8 @@
+        LONG (0);
+      }
+ 
++EOF
++if [ x"$PE_CRT_SECTION" != xno ]; then cat << EOF
+     /* .CRT */
+     ${RELOCATING+___crt_xc_start__ = . ;}
+     ${R_CRT_XC}
+@@ -192,6 +204,9 @@
+     ${RELOCATING+___crt_xd_start__ = . ;}
+     ${R_CRT_XD}
+     ${RELOCATING+___crt_xd_end__ = . ;}
++EOF
++fi
++cat << EOF
+   }
+ 
+   ${RELOCATING+___RUNTIME_PSEUDO_RELOC_LIST_END__ = __rt_psrelocs_end;}
+@@ -228,6 +243,7 @@
+     *(.debug\$T)
+     *(.debug\$F)
+     ${RELOCATING+ *(.drectve)}
++    ${RELOCATING+ *(.symattr)}
+     ${RELOCATING+ *(.note.GNU-stack)}
+     ${RELOCATING+ *(.gnu.lto_*)}
+     ${RELOCATING+ *(.gnu_object_only)}
+--- a/ld/scripttempl/pep.sc
++++ b/ld/scripttempl/pep.sc
+@@ -108,12 +108,17 @@
+     ${RELOCATING+ KEEP (*(.gcc_except_table))}
+   }
+ 
++EOF
++if [ x"$PE_CYGWIN_FORK_SUPPORT" != xno ]; then cat << EOF
+   /* The Cygwin32 library uses a section to avoid copying certain data
+-     on fork.  This used to be named ".data$nocopy".  The linker used
++     on fork.  This used to be named ".data\$nocopy".  The linker used
+      to include this between __data_start__ and __data_end__, but that
+      breaks building the cygwin32 dll.  Instead, we name the section
+      ".data_cygwin_nocopy" and explicitly include it after __data_end__. */
+ 
++EOF
++fi
++cat << EOF
+   .data ${RELOCATING+BLOCK(__section_alignment__)} :
+   {
+     ${RELOCATING+__data_start__ = . ;}
+@@ -122,7 +127,12 @@
+     ${R_DATA}
+     KEEP(*(.jcr))
+     ${RELOCATING+__data_end__ = . ;}
++EOF
++if [ x"$PE_CYGWIN_FORK_SUPPORT" != xno ]; then cat << EOF
+     ${RELOCATING+*(.data_cygwin_nocopy)}
++EOF
++fi
++cat << EOF
+   }
+ 
+   .rdata ${RELOCATING+BLOCK(__section_alignment__)} :
+@@ -175,6 +185,8 @@
+        LONG (0); LONG (0);
+      }
+ 
++EOF
++if [ x"$PE_CRT_SECTION" != xno ]; then cat << EOF
+     /* .CRT */
+     ${RELOCATING+___crt_xc_start__ = . ;}
+     ${R_CRT_XC}
+@@ -194,6 +206,9 @@
+     ${RELOCATING+___crt_xd_start__ = . ;}
+     ${R_CRT_XD}
+     ${RELOCATING+___crt_xd_end__ = . ;}
++EOF
++fi
++cat << EOF
+   }
+ 
+   ${RELOCATING+___RUNTIME_PSEUDO_RELOC_LIST_END__ = __rt_psrelocs_end;}
+@@ -235,6 +250,7 @@
+     *(.debug\$T)
+     *(.debug\$F)
+     ${RELOCATING+ *(.drectve)}
++    ${RELOCATING+ *(.symattr)}
+     ${RELOCATING+ *(.note.GNU-stack)}
+     ${RELOCATING+ *(.gnu.lto_*)}
+     ${RELOCATING+ *(.gnu_object_only)}
+--- a/ld/sysdep.h
++++ b/ld/sysdep.h
+@@ -27,6 +27,10 @@
+ 
+ #include "config.h"
+ 
++#ifdef HAVE_PEIMPLIB_H
++#include "peimplib.h"
++#endif
++
+ #include <stdio.h>
+ #ifdef HAVE_SYS_TYPES_H
+ #include <sys/types.h>
