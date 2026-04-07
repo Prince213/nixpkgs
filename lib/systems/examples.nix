@@ -417,6 +417,14 @@ rec {
     config = "x86_64-pc-cygwin";
   };
 
+  i686-midipix = {
+    config = "i686-nt32-midipix";
+  };
+
+  x86_64-midipix = {
+    config = "x86_64-nt64-midipix";
+  };
+
   # BSDs
 
   aarch64-freebsd = {
